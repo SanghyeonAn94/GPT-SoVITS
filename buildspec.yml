@@ -16,7 +16,7 @@ phases:
 
   build:
     commands:
-      - docker build -f Dockerfile.prod -t $FULL_IMAGE_URI -t $LATEST_IMAGE_URI .
+      - docker build --platform linux/amd64 -f Dockerfile.prod -t $FULL_IMAGE_URI -t $LATEST_IMAGE_URI .
 
   post_build:
     commands:
