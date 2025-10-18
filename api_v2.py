@@ -121,6 +121,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 import uvicorn
 from io import BytesIO
 from tools.i18n.i18n import I18nAuto
+from tools.asr.model_manager import get_stt_model_manager
 from GPT_SoVITS.TTS_infer_pack.TTS import TTS, TTS_Config
 from GPT_SoVITS.TTS_infer_pack.text_segmentation_method import get_method_names as get_cut_method_names
 from pydantic import BaseModel
@@ -553,6 +554,12 @@ async def tts_post_endpoint(request: TTS_Request):
     print(f"  streaming_mode: {request.streaming_mode}")
     print(f"{'='*80}\n")
 
+    # Release STT model before TTS inference to free GPU memory
+    stt_manager = get_stt_model_manager()
+    if stt_manager.is_loaded():
+        print("[TTS] Releasing STT model to free GPU memory for inference")
+        stt_manager.release_model()
+
     req = request.dict()
     return await tts_handle(req)
 
@@ -967,6 +974,12 @@ async def format_dataset_endpoint(request: DatasetFormattingRequest):
     print(f"  pretrained_s2G_path: {request.pretrained_s2G_path}")
     print(f"{'='*80}\n")
 
+    # Release STT model before training to free GPU memory
+    stt_manager = get_stt_model_manager()
+    if stt_manager.is_loaded():
+        print("[TRAINING] Releasing STT model to free GPU memory for dataset formatting")
+        stt_manager.release_model()
+
     job_id = str(uuid.uuid4())
     jobs[job_id] = {
         "status": "queued",
@@ -1108,6 +1121,12 @@ async def fine_tune_sovits_endpoint(request: FineTuneSoVITSRequest):
     print(f"  lora_rank: {request.lora_rank}")
     print(f"{'='*80}\n")
 
+    # Release STT model before training to free GPU memory
+    stt_manager = get_stt_model_manager()
+    if stt_manager.is_loaded():
+        print("[TRAINING] Releasing STT model to free GPU memory for SoVITS fine-tuning")
+        stt_manager.release_model()
+
     job_id = str(uuid.uuid4())
     jobs[job_id] = {
         "status": "queued",
@@ -1144,6 +1163,12 @@ async def fine_tune_gpt_endpoint(request: FineTuneGPTRequest):
     print(f"  gpu_numbers: {request.gpu_numbers}")
     print(f"  pretrained_s1: {request.pretrained_s1}")
     print(f"{'='*80}\n")
+
+    # Release STT model before training to free GPU memory
+    stt_manager = get_stt_model_manager()
+    if stt_manager.is_loaded():
+        print("[TRAINING] Releasing STT model to free GPU memory for GPT fine-tuning")
+        stt_manager.release_model()
 
     job_id = str(uuid.uuid4())
     jobs[job_id] = {

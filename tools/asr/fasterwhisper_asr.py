@@ -11,6 +11,7 @@ from tqdm import tqdm
 
 from tools.asr.config import get_models
 from tools.asr.funasr_asr import only_asr
+from tools.asr.model_manager import get_stt_model_manager
 from tools.my_utils import load_cudnn
 
 # fmt: off
@@ -82,49 +83,63 @@ def download_model(model_size: str):
 
 
 def execute_asr(input_folder, output_folder, model_path, language, precision):
+    """
+    Execute ASR (Speech-to-Text) using singleton model manager.
+
+    Model is kept loaded in memory across multiple calls for better performance.
+    """
     if language == "auto":
         language = None  # 不设置语种由模型自动输出概率最高的语种
-    print("loading faster whisper model:", model_path, model_path)
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = WhisperModel(model_path, device=device, compute_type=precision)
 
-    input_file_names = os.listdir(input_folder)
-    input_file_names.sort()
+    # Use singleton model manager instead of creating new model each time
+    manager = get_stt_model_manager()
+    print(f"Using STT model manager (loaded={manager.is_loaded()}, model_path={model_path})")
 
-    output = []
-    output_file_name = os.path.basename(input_folder)
+    # Acquire model from manager (reuses cached model if parameters match)
+    with manager.get_model(model_path, device, precision) as model:
+        print(f"STT model acquired (device={device}, precision={precision})")
 
-    for file_name in tqdm(input_file_names):
-        try:
-            file_path = os.path.join(input_folder, file_name)
-            segments, info = model.transcribe(
-                audio=file_path,
-                beam_size=5,
-                vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=700),
-                language=language,
-            )
-            text = ""
+        input_file_names = os.listdir(input_folder)
+        input_file_names.sort()
 
-            if info.language == "zh":
-                print("检测为中文文本, 转 FunASR 处理")
-                text = only_asr(file_path, language=info.language.lower())
+        output = []
+        output_file_name = os.path.basename(input_folder)
 
-            if text == "":
-                for segment in segments:
-                    text += segment.text
-            output.append(f"{file_path}|{output_file_name}|{info.language.upper()}|{text}")
-        except Exception as e:
-            print(e)
-            traceback.print_exc()
+        for file_name in tqdm(input_file_names):
+            try:
+                file_path = os.path.join(input_folder, file_name)
+                segments, info = model.transcribe(
+                    audio=file_path,
+                    beam_size=5,
+                    vad_filter=True,
+                    vad_parameters=dict(min_silence_duration_ms=700),
+                    language=language,
+                )
+                text = ""
 
-    output_folder = output_folder or "output/asr_opt"
-    os.makedirs(output_folder, exist_ok=True)
-    output_file_path = os.path.abspath(f"{output_folder}/{output_file_name}.list")
+                if info.language == "zh":
+                    print("检测为中文文本, 转 FunASR 处理")
+                    text = only_asr(file_path, language=info.language.lower())
 
-    with open(output_file_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(output))
-        print(f"ASR 任务完成->标注文件路径: {output_file_path}\n")
+                if text == "":
+                    for segment in segments:
+                        text += segment.text
+                output.append(f"{file_path}|{output_file_name}|{info.language.upper()}|{text}")
+            except Exception as e:
+                print(e)
+                traceback.print_exc()
+
+        output_folder = output_folder or "output/asr_opt"
+        os.makedirs(output_folder, exist_ok=True)
+        output_file_path = os.path.abspath(f"{output_folder}/{output_file_name}.list")
+
+        with open(output_file_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(output))
+            print(f"ASR 任务完成->标注文件路径: {output_file_path}\n")
+
+    # Model reference automatically released by context manager
     return output_file_path
 
 
