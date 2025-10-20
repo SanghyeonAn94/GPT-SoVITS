@@ -61,6 +61,9 @@ RUN pip install --no-cache-dir \
     soundfile \
     BS-RoFormer
 
+# Download NLTK data for English text processing
+RUN python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng'); nltk.download('punkt')"
+
 # Create cache storage directory (shared with ML Service)
 RUN mkdir -p /app/shared/cache_storage
 
