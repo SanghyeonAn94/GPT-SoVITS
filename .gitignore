@@ -189,3 +189,5 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+logs/*
+GPT_SoVITS/text/ja_userdic/*
