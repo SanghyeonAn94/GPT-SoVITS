@@ -198,8 +198,6 @@ class TTS_Request(BaseModel):
     top_p: float = 1
     temperature: float = 1
     text_split_method: str = "cut5"
-    batch_size: int = 1
-    batch_threshold: float = 0.75
     split_bucket: bool = True
     speed_factor: float = 1.0
     fragment_interval: float = 0.3
@@ -210,6 +208,7 @@ class TTS_Request(BaseModel):
     repetition_penalty: float = 1.35
     sample_steps: int = 32
     super_sampling: bool = False
+    n_samples: int = 1
 
 
 class SpeechSlicingRequest(BaseModel):
@@ -447,6 +446,7 @@ async def tts_handle(req: dict):
 
     try:
         tts_generator = tts_pipeline.run(req)
+        n_samples = req.get("n_samples", 1)
 
         if streaming_mode:
 
@@ -469,9 +469,30 @@ async def tts_handle(req: dict):
             )
 
         else:
-            sr, audio_data = next(tts_generator)
-            audio_data = pack_audio(BytesIO(), audio_data, sr, media_type).getvalue()
-            return Response(audio_data, media_type=f"audio/{media_type}")
+            # Collect all audio samples
+            audio_samples = []
+            for sr, audio_data in tts_generator:
+                audio_bytes = pack_audio(BytesIO(), audio_data, sr, media_type).getvalue()
+                # Convert to base64 for JSON response when n_samples > 1
+                if n_samples > 1:
+                    import base64
+                    audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+                    audio_samples.append({
+                        "audio_data": audio_b64,
+                        "sample_rate": sr,
+                        "format": media_type
+                    })
+                else:
+                    audio_samples.append(audio_bytes)
+
+            # Return JSON response for multiple samples, binary for single sample
+            if n_samples > 1:
+                return JSONResponse(content={
+                    "n_samples": len(audio_samples),
+                    "samples": audio_samples
+                })
+            else:
+                return Response(audio_samples[0], media_type=f"audio/{media_type}")
     except Exception as e:
         return JSONResponse(status_code=400, content={"message": "tts failed", "Exception": str(e)})
 
@@ -495,8 +516,6 @@ async def tts_get_endpoint(
     top_p: float = 1,
     temperature: float = 1,
     text_split_method: str = "cut0",
-    batch_size: int = 1,
-    batch_threshold: float = 0.75,
     split_bucket: bool = True,
     speed_factor: float = 1.0,
     fragment_interval: float = 0.3,
@@ -507,6 +526,7 @@ async def tts_get_endpoint(
     repetition_penalty: float = 1.35,
     sample_steps: int = 32,
     super_sampling: bool = False,
+    n_samples: int = 1,
 ):
     req = {
         "text": text,
@@ -519,8 +539,6 @@ async def tts_get_endpoint(
         "top_p": top_p,
         "temperature": temperature,
         "text_split_method": text_split_method,
-        "batch_size": int(batch_size),
-        "batch_threshold": float(batch_threshold),
         "speed_factor": float(speed_factor),
         "split_bucket": split_bucket,
         "fragment_interval": fragment_interval,
@@ -531,6 +549,7 @@ async def tts_get_endpoint(
         "repetition_penalty": float(repetition_penalty),
         "sample_steps": int(sample_steps),
         "super_sampling": super_sampling,
+        "n_samples": int(n_samples),
     }
     return await tts_handle(req)
 
@@ -549,9 +568,9 @@ async def tts_post_endpoint(request: TTS_Request):
     print(f"  top_p: {request.top_p}")
     print(f"  temperature: {request.temperature}")
     print(f"  text_split_method: {request.text_split_method}")
-    print(f"  batch_size: {request.batch_size}")
     print(f"  speed_factor: {request.speed_factor}")
     print(f"  streaming_mode: {request.streaming_mode}")
+    print(f"  n_samples: {request.n_samples}  # GPU batch processing")
     print(f"{'='*80}\n")
 
     # Release STT model before TTS inference to free GPU memory
