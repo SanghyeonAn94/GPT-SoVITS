@@ -795,7 +795,7 @@ class TextAudioSpeakerLoaderV3b(torch.utils.data.Dataset):
                 print(f"Zero duration for {audiopath}, skipping...")
                 skipped_dur += 1
                 continue
-t
+
             if 54 > duration > 0.3 or self.val:
                 audiopaths_sid_text_new.append([audiopath, phoneme_ids])
                 lengths.append(size // (2 * self.hop_length))
