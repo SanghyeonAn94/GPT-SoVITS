@@ -1025,6 +1025,7 @@ class TTS:
         top_p: float = inputs.get("top_p", 1)
         temperature: float = inputs.get("temperature", 1)
         text_split_method: str = inputs.get("text_split_method", "cut0")
+        auto_adjust_sampling: bool = inputs.get("auto_adjust_sampling", True)
         batch_size = inputs.get("batch_size", 1)
         batch_threshold = inputs.get("batch_threshold", 0.75)
         speed_factor = inputs.get("speed_factor", 1.0)
@@ -1212,6 +1213,28 @@ class TTS:
                         self.prompt_cache["prompt_semantic"].expand(len(all_phoneme_ids), -1).to(self.configs.device)
                     )
 
+                # Dynamic sampling adjustment for short action voices
+                adjusted_top_k = top_k
+                adjusted_top_p = top_p
+                adjusted_temperature = temperature
+
+                if auto_adjust_sampling:
+                    text_len = len(norm_text) if isinstance(norm_text, str) else len(norm_text[0])
+
+                    # For very short texts (action voices: 1-5 chars), maximize diversity
+                    if text_len <= 5:
+                        adjusted_top_k = max(top_k, 20)  # Increase from default 15 to 20
+                        adjusted_top_p = max(top_p, 1.0)  # Max diversity (1.0)
+                        adjusted_temperature = max(temperature, 1.0)  # Max randomness (1.0)
+                        print(f"[Action Voice Mode] Short text detected ({text_len} chars)")
+                        print(f"  Adjusted sampling: top_k={adjusted_top_k}, top_p={adjusted_top_p}, temp={adjusted_temperature}")
+                    # For short texts (6-10 chars), moderate increase
+                    elif text_len <= 10:
+                        adjusted_top_k = max(top_k, 18)
+                        adjusted_top_p = max(top_p, 0.95)
+                        adjusted_temperature = max(temperature, 0.9)
+                        print(f"[Short Text Mode] Adjusted sampling for {text_len} chars")
+
                 # T2S: Call n_samples times for different semantic tokens (temperature sampling)
                 print(f"############ {i18n('预测语义Token')} (n_samples={n_samples}) ############")
                 all_pred_semantic_list = []
@@ -1226,9 +1249,9 @@ class TTS:
                         prompt,
                         all_bert_features,
                         # prompt_phone_len=ph_offset,
-                        top_k=top_k,
-                        top_p=top_p,
-                        temperature=temperature,
+                        top_k=adjusted_top_k,
+                        top_p=adjusted_top_p,
+                        temperature=adjusted_temperature,
                         early_stop_num=self.configs.hz * self.configs.max_sec,
                         max_len=max_len,
                         repetition_penalty=repetition_penalty,
