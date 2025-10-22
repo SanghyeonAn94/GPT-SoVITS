@@ -60,6 +60,9 @@ RUN pip install --no-cache-dir \
     soundfile \
     BS-RoFormer
 
+# Download NLTK data for English text processing
+RUN python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng'); nltk.download('punkt')"
+
 # Expose API port
 EXPOSE 9881
 

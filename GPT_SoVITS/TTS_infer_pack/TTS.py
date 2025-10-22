@@ -1025,6 +1025,7 @@ class TTS:
         top_p: float = inputs.get("top_p", 1)
         temperature: float = inputs.get("temperature", 1)
         text_split_method: str = inputs.get("text_split_method", "cut0")
+        auto_adjust_sampling: bool = inputs.get("auto_adjust_sampling", True)
         batch_size = inputs.get("batch_size", 1)
         batch_threshold = inputs.get("batch_threshold", 0.75)
         speed_factor = inputs.get("speed_factor", 1.0)
@@ -1038,6 +1039,7 @@ class TTS:
         repetition_penalty = inputs.get("repetition_penalty", 1.35)
         sample_steps = inputs.get("sample_steps", 32)
         super_sampling = inputs.get("super_sampling", False)
+        n_samples = inputs.get("n_samples", 1)  # Number of audio samples to generate
 
         if parallel_infer:
             print(i18n("并行推理模式已开启"))
@@ -1211,20 +1213,59 @@ class TTS:
                         self.prompt_cache["prompt_semantic"].expand(len(all_phoneme_ids), -1).to(self.configs.device)
                     )
 
-                print(f"############ {i18n('预测语义Token')} ############")
-                pred_semantic_list, idx_list = self.t2s_model.model.infer_panel(
-                    all_phoneme_ids,
-                    all_phoneme_lens,
-                    prompt,
-                    all_bert_features,
-                    # prompt_phone_len=ph_offset,
-                    top_k=top_k,
-                    top_p=top_p,
-                    temperature=temperature,
-                    early_stop_num=self.configs.hz * self.configs.max_sec,
-                    max_len=max_len,
-                    repetition_penalty=repetition_penalty,
-                )
+                # Dynamic sampling adjustment for short action voices
+                adjusted_top_k = top_k
+                adjusted_top_p = top_p
+                adjusted_temperature = temperature
+
+                if auto_adjust_sampling:
+                    text_len = len(norm_text) if isinstance(norm_text, str) else len(norm_text[0])
+
+                    # For very short texts (action voices: 1-5 chars), maximize diversity
+                    if text_len <= 5:
+                        adjusted_top_k = max(top_k, 20)  # Increase from default 15 to 20
+                        adjusted_top_p = max(top_p, 1.0)  # Max diversity (1.0)
+                        adjusted_temperature = max(temperature, 1.0)  # Max randomness (1.0)
+                        print(f"[Action Voice Mode] Short text detected ({text_len} chars)")
+                        print(f"  Adjusted sampling: top_k={adjusted_top_k}, top_p={adjusted_top_p}, temp={adjusted_temperature}")
+                    # For short texts (6-10 chars), moderate increase
+                    elif text_len <= 10:
+                        adjusted_top_k = max(top_k, 18)
+                        adjusted_top_p = max(top_p, 0.95)
+                        adjusted_temperature = max(temperature, 0.9)
+                        print(f"[Short Text Mode] Adjusted sampling for {text_len} chars")
+
+                # T2S: Call n_samples times for different semantic tokens (temperature sampling)
+                print(f"############ {i18n('预测语义Token')} (n_samples={n_samples}) ############")
+                all_pred_semantic_list = []
+                all_idx_list = []
+                all_batch_phones = []
+
+                for sample_idx in range(n_samples):
+                    print(f"  Sample {sample_idx + 1}/{n_samples}...")
+                    pred_semantic_list, idx_list = self.t2s_model.model.infer_panel(
+                        all_phoneme_ids,
+                        all_phoneme_lens,
+                        prompt,
+                        all_bert_features,
+                        # prompt_phone_len=ph_offset,
+                        top_k=adjusted_top_k,
+                        top_p=adjusted_top_p,
+                        temperature=adjusted_temperature,
+                        early_stop_num=self.configs.hz * self.configs.max_sec,
+                        max_len=max_len,
+                        repetition_penalty=repetition_penalty,
+                    )
+                    # Collect results from each sample
+                    all_pred_semantic_list.extend(pred_semantic_list)
+                    all_idx_list.extend(idx_list)
+                    # Replicate batch_phones for this sample
+                    all_batch_phones.extend(batch_phones)
+
+                pred_semantic_list = all_pred_semantic_list
+                idx_list = all_idx_list
+                batch_phones = all_batch_phones
+
                 t4 = time.perf_counter()
                 t_34 += t4 - t3
 
@@ -1280,8 +1321,23 @@ class TTS:
                             _batch_audio_fragment[audio_frag_end_idx[i - 1] : audio_frag_end_idx[i]]
                             for i in range(1, len(audio_frag_end_idx))
                         ]
+
+                        # Split into n_samples groups if needed
+                        if n_samples > 1:
+                            # batch_audio_fragment contains [text1_s1, text1_s2, text1_s3, text1_s4, ...]
+                            # Group by original text segments
+                            num_text_segments = len(batch_audio_fragment) // n_samples
+                            all_samples_audio_fragments = []
+                            for sample_idx in range(n_samples):
+                                sample_fragments = []
+                                for text_idx in range(num_text_segments):
+                                    idx = text_idx * n_samples + sample_idx
+                                    sample_fragments.append(batch_audio_fragment[idx])
+                                all_samples_audio_fragments.append(sample_fragments)
+                        else:
+                            all_samples_audio_fragments = [batch_audio_fragment]
                     else:
-                        # ## vits串行推理
+                        # ## vits串行推理 (with speed_factor != 1.0)
                         for i, idx in enumerate(tqdm(idx_list)):
                             phones = batch_phones[i].unsqueeze(0).to(self.configs.device)
                             _pred_semantic = (
@@ -1296,6 +1352,19 @@ class TTS:
                                     _pred_semantic, phones, refer_audio_spec, speed=speed_factor, sv_emb=sv_emb
                                 ).detach()[0, 0, :]
                             batch_audio_fragment.append(audio_fragment)  ###试试重建不带上prompt部分
+
+                        # Group by n_samples
+                        if n_samples > 1:
+                            num_text_segments = len(batch_audio_fragment) // n_samples
+                            all_samples_audio_fragments = []
+                            for sample_idx in range(n_samples):
+                                sample_fragments = []
+                                for text_idx in range(num_text_segments):
+                                    idx = text_idx * n_samples + sample_idx
+                                    sample_fragments.append(batch_audio_fragment[idx])
+                                all_samples_audio_fragments.append(sample_fragments)
+                        else:
+                            all_samples_audio_fragments = [batch_audio_fragment]
                 else:
                     if parallel_infer:
                         print(f"{i18n('并行合成中')}...")
@@ -1303,6 +1372,19 @@ class TTS:
                             idx_list, pred_semantic_list, batch_phones, speed=speed_factor, sample_steps=sample_steps
                         )
                         batch_audio_fragment.extend(audio_fragments)
+
+                        # Group by n_samples
+                        if n_samples > 1:
+                            num_text_segments = len(batch_audio_fragment) // n_samples
+                            all_samples_audio_fragments = []
+                            for sample_idx in range(n_samples):
+                                sample_fragments = []
+                                for text_idx in range(num_text_segments):
+                                    idx = text_idx * n_samples + sample_idx
+                                    sample_fragments.append(batch_audio_fragment[idx])
+                                all_samples_audio_fragments.append(sample_fragments)
+                        else:
+                            all_samples_audio_fragments = [batch_audio_fragment]
                     else:
                         for i, idx in enumerate(tqdm(idx_list)):
                             phones = batch_phones[i].unsqueeze(0).to(self.configs.device)
@@ -1314,21 +1396,37 @@ class TTS:
                             )
                             batch_audio_fragment.append(audio_fragment)
 
+                        # Group by n_samples
+                        if n_samples > 1:
+                            num_text_segments = len(batch_audio_fragment) // n_samples
+                            all_samples_audio_fragments = []
+                            for sample_idx in range(n_samples):
+                                sample_fragments = []
+                                for text_idx in range(num_text_segments):
+                                    idx = text_idx * n_samples + sample_idx
+                                    sample_fragments.append(batch_audio_fragment[idx])
+                                all_samples_audio_fragments.append(sample_fragments)
+                        else:
+                            all_samples_audio_fragments = [batch_audio_fragment]
+
                 t5 = time.perf_counter()
                 t_45 += t5 - t4
                 if return_fragment:
                     print("%.3f\t%.3f\t%.3f\t%.3f" % (t1 - t0, t2 - t1, t4 - t3, t5 - t4))
-                    yield self.audio_postprocess(
-                        [batch_audio_fragment],
-                        output_sr,
-                        None,
-                        speed_factor,
-                        False,
-                        fragment_interval,
-                        super_sampling if self.configs.use_vocoder and self.configs.version == "v3" else False,
-                    )
+                    # Yield each sample separately
+                    for sample_audio_fragments in all_samples_audio_fragments:
+                        yield self.audio_postprocess(
+                            [sample_audio_fragments],
+                            output_sr,
+                            None,
+                            speed_factor,
+                            False,
+                            fragment_interval,
+                            super_sampling if self.configs.use_vocoder and self.configs.version == "v3" else False,
+                        )
                 else:
-                    audio.append(batch_audio_fragment)
+                    # Store all samples
+                    audio.append(all_samples_audio_fragments)
 
                 if self.stop_flag:
                     yield 16000, np.zeros(int(16000), dtype=np.int16)
@@ -1339,15 +1437,22 @@ class TTS:
                 if len(audio) == 0:
                     yield 16000, np.zeros(int(16000), dtype=np.int16)
                     return
-                yield self.audio_postprocess(
-                    audio,
-                    output_sr,
-                    batch_index_list,
-                    speed_factor,
-                    split_bucket,
-                    fragment_interval,
-                    super_sampling if self.configs.use_vocoder and self.configs.version == "v3" else False,
-                )
+
+                # audio is now a list of samples: [[sample1_fragments], [sample2_fragments], ...]
+                # Flatten it: [sample1_fragments, sample2_fragments, ...]
+                all_samples = [sample_fragments for item in audio for sample_fragments in item]
+
+                # Yield each sample separately
+                for sample_audio_fragments in all_samples:
+                    yield self.audio_postprocess(
+                        [sample_audio_fragments],
+                        output_sr,
+                        None,  # No batch_index_list for multi-sample
+                        speed_factor,
+                        False,  # No split_bucket for multi-sample
+                        fragment_interval,
+                        super_sampling if self.configs.use_vocoder and self.configs.version == "v3" else False,
+                    )
 
         except Exception as e:
             traceback.print_exc()

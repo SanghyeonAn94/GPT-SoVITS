@@ -183,7 +183,7 @@ class TextPreprocessor:
             phones = sum(phones_list, [])
             norm_text = "".join(norm_text_list)
 
-            if not final and len(phones) < 6:
+            if not final and len(phones) < 3:
                 return self.get_phones_and_bert("." + text, language, version, final=True)
 
             return phones, bert, norm_text
@@ -232,8 +232,41 @@ class TextPreprocessor:
                 _text.append(text)
         return _text
 
-    def replace_consecutive_punctuation(self, text):
-        punctuations = "".join(re.escape(p) for p in punctuation)
-        pattern = f"([{punctuations}])([{punctuations}])+"
-        result = re.sub(pattern, r"\1", text)
-        return result
+    def replace_consecutive_punctuation(self, text, max_n=3):
+        """
+        Normalize consecutive punctuation (ceiling at max_n characters)
+
+        Rules:
+        - 1 occurrence: keep as-is
+        - 2 occurrences: keep as-is
+        - 3 occurrences: keep as-is
+        - 4+ occurrences: limit to 3
+
+        Examples:
+        - "..." → "..." (keep 3)
+        - "...." → "..." (limit to 3)
+        - ",," → ",," (keep 2)
+        - ",,,,," → ",,," (limit to 3)
+
+        Benefits:
+        - No vocab expansion needed (reuses existing ',' '.' symbols)
+        - Consecutive punctuation splits into individual phonemes: ",,," → [',', ',', ',']
+        - GPT can learn longer pauses through repeated punctuation embeddings
+        """
+        def normalize_punct(match):
+            punct = match.group(1)  # punctuation type
+            count = len(match.group(0))  # consecutive count
+            normalized_count = min(count, max_n)
+            return punct * normalized_count
+
+        # Commas: process consecutive (max 3)
+        text = re.sub(r'(,){1,}', normalize_punct, text)
+
+        # Periods: process consecutive (max 3)
+        text = re.sub(r'(\.){1,}', normalize_punct, text)
+
+        # Optional: handle exclamation marks and question marks similarly
+        text = re.sub(r'(!){1,}', normalize_punct, text)
+        text = re.sub(r'(\?){1,}', normalize_punct, text)
+
+        return text
