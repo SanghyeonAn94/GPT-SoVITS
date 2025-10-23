@@ -1223,17 +1223,9 @@ class TTS:
 
                     # For very short texts (action voices: 1-5 chars), maximize diversity
                     if text_len <= 5:
-                        adjusted_top_k = max(top_k, 20)  # Increase from default 15 to 20
-                        adjusted_top_p = max(top_p, 1.0)  # Max diversity (1.0)
-                        adjusted_temperature = max(temperature, 1.0)  # Max randomness (1.0)
-                        print(f"[Action Voice Mode] Short text detected ({text_len} chars)")
-                        print(f"  Adjusted sampling: top_k={adjusted_top_k}, top_p={adjusted_top_p}, temp={adjusted_temperature}")
-                    # For short texts (6-10 chars), moderate increase
-                    elif text_len <= 10:
-                        adjusted_top_k = max(top_k, 18)
-                        adjusted_top_p = max(top_p, 0.95)
-                        adjusted_temperature = max(temperature, 0.9)
-                        print(f"[Short Text Mode] Adjusted sampling for {text_len} chars")
+                        adjusted_top_k = max(top_k, 20)
+                        adjusted_top_p = max(top_p, 1.0)
+                        adjusted_temperature = max(temperature, 1.0)
 
                 # T2S: Call n_samples times for different semantic tokens (temperature sampling)
                 print(f"############ {i18n('预测语义Token')} (n_samples={n_samples}) ############")
