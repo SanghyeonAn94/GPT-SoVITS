@@ -583,6 +583,93 @@ async def tts_post_endpoint(request: TTS_Request):
     return await tts_handle(req)
 
 
+@APP.post("/tts/generate-spectrogram")
+async def tts_generate_spectrogram(request: TTS_Request):
+    print(f"\n{'='*80}")
+    print(f"[SPECTROGRAM] Generating mel-spectrogram only")
+    print(f"  text: {request.text[:100] if len(request.text) > 100 else request.text}")
+    print(f"  text_lang: {request.text_lang}")
+    print(f"  ref_audio_path: {request.ref_audio_path}")
+    print(f"{'='*80}\n")
+
+    stt_manager = get_stt_model_manager()
+    if stt_manager.is_loaded():
+        print("[SPECTROGRAM] Releasing STT model to free GPU memory")
+        stt_manager.release_model()
+
+    req = request.dict()
+
+    try:
+        mel_data = tts_pipeline.generate_mel_spectrogram(req)
+
+        if mel_data.get("empty_result"):
+            return JSONResponse(status_code=400, content={"message": "No text to synthesize"})
+
+        import json
+        import base64
+        import pickle
+
+        mel_data_serialized = base64.b64encode(pickle.dumps(mel_data)).decode('utf-8')
+
+        return JSONResponse(status_code=200, content={
+            "message": "success",
+            "mel_data": mel_data_serialized,
+            "metadata": {
+                "n_samples": req.get("n_samples", 1),
+                "sample_rate": 32000 if tts_pipeline.configs.version == "v4" else 24000
+            }
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"message": "Failed to generate spectrogram", "error": str(e)})
+
+
+@APP.post("/tts/vocoder-inference")
+async def tts_vocoder_inference(request: dict):
+    print(f"\n{'='*80}")
+    print(f"[VOCODER] Synthesizing audio from mel-spectrogram")
+    print(f"{'='*80}\n")
+
+    import base64
+    import pickle
+    import io
+    import soundfile as sf
+
+    try:
+        mel_data_serialized = request.get("mel_data")
+        if not mel_data_serialized:
+            return JSONResponse(status_code=400, content={"message": "mel_data is required"})
+
+        mel_data = pickle.loads(base64.b64decode(mel_data_serialized))
+
+        super_sampling = request.get("super_sampling", False)
+        mel_data["super_sampling"] = super_sampling
+
+        results = []
+        for sr, audio_data in tts_pipeline.vocoder_inference(mel_data):
+            audio_bytes_io = io.BytesIO()
+            sf.write(audio_bytes_io, audio_data, sr, format='wav')
+            audio_bytes = audio_bytes_io.getvalue()
+            audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+
+            results.append({
+                "audio": audio_base64,
+                "sample_rate": sr,
+                "format": "wav"
+            })
+
+        return JSONResponse(status_code=200, content={
+            "message": "success",
+            "results": results
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"message": "Failed to synthesize audio", "error": str(e)})
+
+
 @APP.get("/set_refer_audio")
 async def set_refer_aduio(refer_audio_path: str = None):
     try:
