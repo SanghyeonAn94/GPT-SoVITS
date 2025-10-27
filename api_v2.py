@@ -583,37 +583,43 @@ async def tts_post_endpoint(request: TTS_Request):
     return await tts_handle(req)
 
 
-@APP.post("/tts/generate-spectrogram")
-async def tts_generate_spectrogram(request: TTS_Request):
+@APP.post("/tts/generate-semantic")
+async def tts_generate_semantic(request: TTS_Request):
+    """
+    Generate semantic tokens from text (Text-to-Semantic).
+
+    This endpoint stops after GPT model inference, before vocoder.
+    Used for Advanced Voice Card editor where users can edit semantic tokens.
+    """
+
     print(f"\n{'='*80}")
-    print(f"[SPECTROGRAM] Generating mel-spectrogram only")
+    print(f"[SEMANTIC TOKENS] Generating semantic tokens only")
     print(f"  text: {request.text[:100] if len(request.text) > 100 else request.text}")
     print(f"  text_lang: {request.text_lang}")
     print(f"  ref_audio_path: {request.ref_audio_path}")
     print(f"{'='*80}\n")
-
+    
     stt_manager = get_stt_model_manager()
     if stt_manager.is_loaded():
-        print("[SPECTROGRAM] Releasing STT model to free GPU memory")
         stt_manager.release_model()
 
     req = request.dict()
 
     try:
-        mel_data = tts_pipeline.generate_mel_spectrogram(req)
+        semantic_data = tts_pipeline.generate_semantic_tokens(req)
 
-        if mel_data.get("empty_result"):
+        if semantic_data.get("empty_result"):
             return JSONResponse(status_code=400, content={"message": "No text to synthesize"})
 
         import json
         import base64
         import pickle
 
-        mel_data_serialized = base64.b64encode(pickle.dumps(mel_data)).decode('utf-8')
+        semantic_data_serialized = base64.b64encode(pickle.dumps(semantic_data)).decode('utf-8')
 
         return JSONResponse(status_code=200, content={
             "message": "success",
-            "mel_data": mel_data_serialized,
+            "semantic_tokens": semantic_data_serialized,
             "metadata": {
                 "n_samples": req.get("n_samples", 1),
                 "sample_rate": 32000 if tts_pipeline.configs.version == "v4" else 24000
@@ -622,32 +628,43 @@ async def tts_generate_spectrogram(request: TTS_Request):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return JSONResponse(status_code=500, content={"message": "Failed to generate spectrogram", "error": str(e)})
+        return JSONResponse(status_code=500, content={"message": "Failed to generate semantic tokens", "error": str(e)})
 
 
 @APP.post("/tts/vocoder-inference")
 async def tts_vocoder_inference(request: dict):
-    print(f"\n{'='*80}")
-    print(f"[VOCODER] Synthesizing audio from mel-spectrogram")
-    print(f"{'='*80}\n")
+    """
+    Synthesize audio from semantic tokens (Semantic-to-Speech).
 
+    Request body:
+    {
+        "semantic_data": "<base64_encoded_pickle_of_semantic_dict>",
+        "super_sampling": false
+    }
+
+    semantic_dict structure:
+    {
+        "semantic_data": [...],  # List of segment dicts with pred_semantic_list
+        "metadata": {...}
+    }
+    """
     import base64
     import pickle
     import io
     import soundfile as sf
 
     try:
-        mel_data_serialized = request.get("mel_data")
-        if not mel_data_serialized:
-            return JSONResponse(status_code=400, content={"message": "mel_data is required"})
+        semantic_data_serialized = request.get("semantic_data")
+        if not semantic_data_serialized:
+            return JSONResponse(status_code=400, content={"message": "semantic_data is required"})
 
-        mel_data = pickle.loads(base64.b64decode(mel_data_serialized))
+        semantic_dict = pickle.loads(base64.b64decode(semantic_data_serialized))
 
         super_sampling = request.get("super_sampling", False)
-        mel_data["super_sampling"] = super_sampling
+        semantic_dict["super_sampling"] = super_sampling
 
         results = []
-        for sr, audio_data in tts_pipeline.vocoder_inference(mel_data):
+        for sr, audio_data in tts_pipeline.vocoder_inference(semantic_dict):
             audio_bytes_io = io.BytesIO()
             sf.write(audio_bytes_io, audio_data, sr, format='wav')
             audio_bytes = audio_bytes_io.getvalue()

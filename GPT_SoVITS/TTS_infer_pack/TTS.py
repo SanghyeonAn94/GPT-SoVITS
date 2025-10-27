@@ -985,23 +985,35 @@ class TTS:
         """
         self.stop_flag = True
 
-    def generate_mel_spectrogram(self, inputs: dict):
+    def generate_semantic_tokens(self, inputs: dict):
         semantic_data = self.semantic_processor.generate_semantic_tokens(inputs)
         return semantic_data
 
-    def vocoder_inference(self, mel_data: dict):
-        super_sampling = mel_data.get("super_sampling", False)
-        results = self.vocoder_processor.synthesis_from_semantic(mel_data, super_sampling)
+    def vocoder_inference(self, semantic_dict: dict):
+        """
+        Generate audio from semantic tokens (Semantic-to-Speech).
+
+        Args:
+            semantic_dict: Dictionary containing:
+                - semantic_data: List of segment dicts with pred_semantic_list
+                - metadata: Additional metadata
+                - super_sampling: Whether to use super-sampling (optional)
+
+        Yields:
+            (sample_rate, audio_data) tuples
+        """
+        super_sampling = semantic_dict.get("super_sampling", False)
+        results = self.vocoder_processor.synthesis_from_semantic(semantic_dict, super_sampling)
         for result in results:
             yield result
 
     @torch.no_grad()
     def run(self, inputs: dict):
         try:
-            mel_data = self.generate_mel_spectrogram(inputs)
-            mel_data["super_sampling"] = inputs.get("super_sampling", False)
+            semantic_data = self.generate_semantic_tokens(inputs)
+            semantic_data["super_sampling"] = inputs.get("super_sampling", False)
 
-            for result in self.vocoder_inference(mel_data):
+            for result in self.vocoder_inference(semantic_data):
                 yield result
 
         except Exception as e:

@@ -35,7 +35,8 @@ class I18nAuto:
     def __repr__(self):
         return "Use Language: " + self.language
 
+i18n = I18nAuto(language="en_US")
+
 
 if __name__ == "__main__":
-    i18n = I18nAuto(language="en_US")
     print(i18n)
