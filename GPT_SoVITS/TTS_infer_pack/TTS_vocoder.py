@@ -14,8 +14,10 @@ class TTSVocoder:
     def synthesis_from_semantic(self, semantic_tokens: dict, super_sampling: bool = False) -> List[Tuple[int, np.ndarray]]:
         if semantic_tokens.get("empty_result"):
             return [(16000, np.zeros(int(16000), dtype=np.int16))]
+        semantic_results = semantic_tokens.get("semantic_data") or semantic_tokens.get("semantic_tokens")
+        if semantic_results is None:
+            raise ValueError("Neither 'semantic_data' nor 'semantic_tokens' found in semantic_tokens dict")
 
-        semantic_results = semantic_tokens["semantic_tokens"]
         metadata = semantic_tokens["metadata"]
 
         batch_index_list = metadata.get("batch_index_list")
