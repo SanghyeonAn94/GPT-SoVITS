@@ -11,12 +11,12 @@ class TTSVocoder:
     def __init__(self, parent_tts):
         self.parent = parent_tts
 
-    def synthesis_from_semantic(self, semantic_data: dict, super_sampling: bool = False) -> List[Tuple[int, np.ndarray]]:
-        if semantic_data.get("empty_result"):
+    def synthesis_from_semantic(self, semantic_tokens: dict, super_sampling: bool = False) -> List[Tuple[int, np.ndarray]]:
+        if semantic_tokens.get("empty_result"):
             return [(16000, np.zeros(int(16000), dtype=np.int16))]
 
-        semantic_results = semantic_data["semantic_data"]
-        metadata = semantic_data["metadata"]
+        semantic_results = semantic_tokens["semantic_tokens"]
+        metadata = semantic_tokens["metadata"]
 
         batch_index_list = metadata.get("batch_index_list")
         split_bucket = metadata.get("split_bucket")

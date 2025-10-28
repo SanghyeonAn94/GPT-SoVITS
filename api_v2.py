@@ -638,13 +638,13 @@ async def tts_vocoder_inference(request: dict):
 
     Request body:
     {
-        "semantic_data": "<base64_encoded_pickle_of_semantic_dict>",
+        "semantic_tokens": "<base64_encoded_pickle_of_semantic_dict>",
         "super_sampling": false
     }
 
     semantic_dict structure:
     {
-        "semantic_data": [...],  # List of segment dicts with pred_semantic_list
+        "semantic_tokens": [...],  # List of segment dicts with pred_semantic_list
         "metadata": {...}
     }
     """
@@ -654,9 +654,9 @@ async def tts_vocoder_inference(request: dict):
     import soundfile as sf
 
     try:
-        semantic_data_serialized = request.get("semantic_data")
+        semantic_data_serialized = request.get("semantic_tokens")
         if not semantic_data_serialized:
-            return JSONResponse(status_code=400, content={"message": "semantic_data is required"})
+            return JSONResponse(status_code=400, content={"message": "semantic_tokens is required"})
 
         semantic_dict = pickle.loads(base64.b64decode(semantic_data_serialized))
 
