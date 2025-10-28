@@ -651,49 +651,74 @@ async def tts_vocoder_inference(request: dict):
     """
     Synthesize audio from semantic tokens (Semantic-to-Speech).
 
-    Request body:
+    Request body (simplified for voice rework):
     {
-        "semantic_tokens": "<base64_encoded_pickle_of_semantic_dict>",
+        "semantic_tokens": [1, 2, 3, ...],  # Direct list of token IDs
+        "ref_audio_path": "path/to/reference.wav",  # Reference audio for vocoder
         "super_sampling": false
-    }
-
-    semantic_dict structure:
-    {
-        "semantic_tokens": [...],  # List of segment dicts with pred_semantic_list
-        "metadata": {...}
     }
     """
     import base64
-    import pickle
     import io
     import soundfile as sf
+    import torch
 
     try:
-        semantic_data_serialized = request.get("semantic_tokens")
-        if not semantic_data_serialized:
+        semantic_tokens = request.get("semantic_tokens")
+        if not semantic_tokens:
             return JSONResponse(status_code=400, content={"message": "semantic_tokens is required"})
 
-        semantic_dict = pickle.loads(base64.b64decode(semantic_data_serialized))
+        ref_audio_path = request.get("ref_audio_path")
+        if not ref_audio_path:
+            return JSONResponse(status_code=400, content={"message": "ref_audio_path is required"})
 
         super_sampling = request.get("super_sampling", False)
-        semantic_dict["super_sampling"] = super_sampling
 
-        results = []
-        for sr, audio_data in tts_pipeline.vocoder_inference(semantic_dict):
-            audio_bytes_io = io.BytesIO()
-            sf.write(audio_bytes_io, audio_data, sr, format='wav')
-            audio_bytes = audio_bytes_io.getvalue()
-            audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+        # Set reference audio for vocoder
+        tts_pipeline.set_ref_audio(ref_audio_path)
 
-            results.append({
-                "audio": audio_base64,
-                "sample_rate": sr,
-                "format": "wav"
-            })
+        # Convert token list to tensor
+        pred_semantic = torch.LongTensor(semantic_tokens).unsqueeze(0)
+        pred_semantic = pred_semantic.to(tts_pipeline.configs.device)
+
+        # Generate audio using V4 pipeline (CFM + BigVGAN)
+        # For V4: semantic → CFM → mel-spectrogram → BigVGAN → audio
+        if tts_pipeline.configs.version == "v4":
+            # Use CFM to generate mel-spectrogram
+            with torch.no_grad():
+                mel = tts_pipeline.t2s_model.cfm_forward(
+                    pred_semantic,
+                    torch.LongTensor([pred_semantic.shape[1]]).to(tts_pipeline.configs.device)
+                )
+
+                # Use BigVGAN vocoder to generate audio
+                audio = tts_pipeline.vocoder.forward(mel).squeeze(0).squeeze(0)
+                audio = audio.cpu().numpy()
+        else:
+            # For other versions, use standard VITS vocoder
+            refer_spec = tts_pipeline.prompt_cache["refer_spec"][0][0]
+            refer_spec = refer_spec.to(dtype=tts_pipeline.precision, device=tts_pipeline.configs.device)
+
+            with torch.no_grad():
+                audio = tts_pipeline.vits_model.decode(
+                    pred_semantic,
+                    refer_spec
+                ).detach().cpu().numpy()[0, 0]
+
+        # Get sample rate
+        sr = tts_pipeline.configs.sampling_rate
+
+        # Convert to WAV
+        audio_bytes_io = io.BytesIO()
+        sf.write(audio_bytes_io, audio, sr, format='wav')
+        audio_bytes = audio_bytes_io.getvalue()
+        audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
 
         return JSONResponse(status_code=200, content={
             "message": "success",
-            "results": results
+            "audio_base64": audio_base64,
+            "sample_rate": sr,
+            "format": "wav"
         })
 
     except Exception as e:
