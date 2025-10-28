@@ -1404,6 +1404,319 @@ async def execute_fine_tune_gpt_direct(job_id: str, request: FineTuneGPTRequest)
         jobs[job_id]["failed_at"] = datetime.now().isoformat()
 
 
+####################################
+# Mel-Spectrogram Conversion Endpoints (V4)
+####################################
+
+class AudioToMelRequest(BaseModel):
+    """Request to convert audio to mel-spectrogram (v4: 32kHz internal processing)."""
+    audio_path: str
+    return_base64: bool = True  # If False, saves to file and returns path
+
+
+class MelToAudioRequest(BaseModel):
+    """Request to convert mel-spectrogram to audio (v4: 48kHz output)."""
+    mel_spectrogram_base64: str
+    semantic_tokens: list
+    active_region: list  # [begin, end]
+    tone: float
+    stretch: float
+    amplitude: float
+    
+
+@APP.post("/audio-to-mel")
+async def audio_to_mel_v4(request: AudioToMelRequest):
+    """
+    Convert audio file to mel-spectrogram using v4 configuration.
+
+    V4 uses 32kHz sampling rate for internal mel-spectrogram processing.
+
+    Args:
+        audio_path: Path to audio file
+        return_base64: If True, returns base64 encoded numpy array
+
+    Returns:
+        {
+            "mel_spectrogram": base64 string or file path,
+            "shape": [mel_bins, time_frames],
+            "sample_rate": 32000,
+            "success": true
+        }
+    """
+    try:
+        import base64
+        from GPT_SoVITS.module.mel_processing import mel_spectrogram_torch
+        from tools.my_utils import load_audio
+        import torch
+
+        # V4 mel-spectrogram configuration (32kHz)
+        audio_array = load_audio(request.audio_path, 32000)
+        audio_tensor = torch.FloatTensor(audio_array).unsqueeze(0)
+
+        # Extract mel-spectrogram with v4 parameters
+        mel = mel_spectrogram_torch(
+            y=audio_tensor,
+            n_fft=1280,
+            num_mels=100,
+            sampling_rate=32000,
+            hop_size=320,
+            win_size=1280,
+            fmin=0,
+            fmax=None,
+            center=False
+        )
+
+        mel_np = mel.squeeze(0).cpu().numpy()
+
+        if request.return_base64:
+            # Convert to base64
+            mel_bytes = mel_np.tobytes()
+            mel_base64 = base64.b64encode(mel_bytes).decode('utf-8')
+
+            return JSONResponse(content={
+                "mel_spectrogram": mel_base64,
+                "shape": list(mel_np.shape),
+                "dtype": str(mel_np.dtype),
+                "sample_rate": 32000,
+                "success": True
+            })
+        else:
+            # Save to file
+            output_path = request.audio_path.rsplit('.', 1)[0] + '_mel.npy'
+            np.save(output_path, mel_np)
+
+            return JSONResponse(content={
+                "mel_spectrogram_path": output_path,
+                "shape": list(mel_np.shape),
+                "sample_rate": 32000,
+                "success": True
+            })
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }
+        )
+
+
+def apply_mel_manipulations(mel_np: np.ndarray, active_region: list, tone: float, stretch: float, amplitude: float) -> np.ndarray:
+    """
+    Apply tone (frequency), stretch (time), and amplitude manipulations to mel-spectrogram.
+
+    Args:
+        mel_np: Mel-spectrogram [mel_bins, time_frames]
+        active_region: [begin, end] frame indices to apply effects
+        tone: Frequency shift in range [-1.0, 1.0] (negative=down, positive=up)
+        stretch: Time stretch factor in range [0.0, 1.0] (0=fastest, 1=slowest)
+        amplitude: Amplitude scaling in range [0.0, 2.0] (0=silence, 1=original, 2=2x volume)
+
+    Returns:
+        Modified mel-spectrogram [mel_bins, time_frames]
+    """
+    import scipy.ndimage
+    from scipy.interpolate import interp1d
+
+    mel_bins, time_frames = mel_np.shape
+    begin_frame, end_frame = active_region
+
+    # Clip to valid range
+    begin_frame = max(0, min(begin_frame, time_frames))
+    end_frame = max(begin_frame, min(end_frame, time_frames))
+
+    # Extract active region
+    mel_active = mel_np[:, begin_frame:end_frame].copy()
+
+    # 1. Apply TONE (Frequency shift)
+    # tone in [-1, 1] maps to frequency shift
+    # Positive tone = shift up (higher pitch), Negative = shift down (lower pitch)
+    if abs(tone) > 0.01:  # Apply only if significant
+        # Convert tone to shift amount in mel bins
+        # tone=1.0 shifts up by 20% of mel bins, tone=-1.0 shifts down by 20%
+        shift_bins = int(tone * mel_bins * 0.2)
+
+        if shift_bins > 0:
+            # Shift up (higher frequency)
+            mel_shifted = np.zeros_like(mel_active)
+            mel_shifted[shift_bins:, :] = mel_active[:-shift_bins, :]
+            mel_active = mel_shifted
+        elif shift_bins < 0:
+            # Shift down (lower frequency)
+            mel_shifted = np.zeros_like(mel_active)
+            mel_shifted[:shift_bins, :] = mel_active[-shift_bins:, :]
+            mel_active = mel_shifted
+
+    # 2. Apply STRETCH (Time stretching)
+    # stretch in [0, 1] maps to time stretch factor
+    # stretch=0 means 4x faster (0.25x), stretch=1 means 1x speed (no change)
+    # Linear interpolation: stretch_factor = 0.25 + (stretch * 0.75)
+    if abs(stretch - 1.0) > 0.01:  # Apply only if not near 1.0
+        stretch_factor = 0.25 + (stretch * 0.75)  # [0.25, 1.0]
+
+        active_frames = mel_active.shape[1]
+        new_frames = int(active_frames * stretch_factor)
+
+        if new_frames > 0 and new_frames != active_frames:
+            # Interpolate along time axis
+            old_indices = np.arange(active_frames)
+            new_indices = np.linspace(0, active_frames - 1, new_frames)
+
+            mel_stretched = np.zeros((mel_bins, new_frames), dtype=mel_active.dtype)
+            for i in range(mel_bins):
+                interpolator = interp1d(old_indices, mel_active[i, :], kind='linear', fill_value='extrapolate')
+                mel_stretched[i, :] = interpolator(new_indices)
+
+            mel_active = mel_stretched
+
+    # 3. Apply AMPLITUDE (Volume scaling)
+    # amplitude in [0, 2]: 0=silence, 1=original, 2=2x volume
+    if abs(amplitude - 1.0) > 0.01:  # Apply only if not 1.0
+        mel_active = mel_active * amplitude
+
+    # Reconstruct full mel-spectrogram
+    # If stretch changed the length, we need to adjust
+    result_mel = mel_np.copy()
+    active_length = mel_active.shape[1]
+
+    # Replace active region (may be different length now)
+    if active_length <= (end_frame - begin_frame):
+        # Shortened or same length
+        result_mel[:, begin_frame:begin_frame + active_length] = mel_active
+        # If shortened, shift remaining frames forward
+        if active_length < (end_frame - begin_frame):
+            gap = (end_frame - begin_frame) - active_length
+            result_mel[:, begin_frame + active_length:-gap] = result_mel[:, end_frame:]
+            result_mel = result_mel[:, :-gap]  # Trim end
+    else:
+        # Lengthened - need to expand the array
+        extra_frames = active_length - (end_frame - begin_frame)
+        result_mel = np.concatenate([
+            result_mel[:, :begin_frame],
+            mel_active,
+            result_mel[:, end_frame:]
+        ], axis=1)
+
+    return result_mel
+
+
+@APP.post("/mel-to-audio")
+async def mel_to_audio_v4(request: MelToAudioRequest):
+    """
+    Convert mel-spectrogram to audio using v4 vocoder with optional manipulations.
+
+    V4 outputs 48kHz audio natively (fixes v3 metallic artifacts).
+
+    Args:
+        mel_spectrogram_base64: Base64 encoded mel-spectrogram numpy array
+        active_region: [begin, end] frame indices to apply effects
+        tone: Frequency shift in [-1.0, 1.0] (negative=down, positive=up)
+        stretch: Time stretch factor in [0.0, 1.0] (0=4x faster, 1=original speed)
+        amplitude: Volume scaling in [0.0, 2.0] (0=silence, 1=original, 2=2x)
+
+    Returns:
+        {
+            "audio_base64": base64 string,
+            "sample_rate": 48000,
+            "duration_seconds": float,
+            "success": true,
+            "applied_effects": {
+                "tone": float,
+                "stretch": float,
+                "amplitude": float,
+                "active_region": [begin, end]
+            }
+        }
+    """
+    try:
+        import base64
+        import torch
+
+        # Decode mel-spectrogram from base64
+        mel_bytes = base64.b64decode(request.mel_spectrogram_base64)
+
+        # Infer shape from data size (assuming float32)
+        total_elements = len(mel_bytes) // 4  # 4 bytes per float32
+        mel_bins = 100  # v4 uses 100 mel bins
+        time_frames = total_elements // mel_bins
+
+        mel_np = np.frombuffer(mel_bytes, dtype=np.float32).reshape(mel_bins, time_frames)
+
+        # Validate parameters
+        tone = np.clip(request.tone, -1.0, 1.0)
+        stretch = np.clip(request.stretch, 0.0, 1.0)
+        amplitude = np.clip(request.amplitude, 0.0, 2.0)
+
+        # Apply manipulations to mel-spectrogram
+        mel_modified = apply_mel_manipulations(
+            mel_np,
+            request.active_region,
+            tone,
+            stretch,
+            amplitude
+        )
+
+        mel_tensor = torch.from_numpy(mel_modified).unsqueeze(0)
+
+        # Check if vocoder is available
+        if not hasattr(tts_pipeline, 'vocoder') or tts_pipeline.vocoder is None:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "error": "Vocoder not loaded. Please ensure v4 model is loaded with use_vocoder=true"
+                }
+            )
+
+        # Convert mel to audio using vocoder
+        with torch.inference_mode():
+            mel_tensor = mel_tensor.to(tts_pipeline.configs.device)
+            audio_tensor = tts_pipeline.vocoder(mel_tensor)
+            audio = audio_tensor[0, 0].cpu().numpy()
+
+        # Get output sample rate (v4 outputs 48kHz)
+        output_sr = tts_pipeline.vocoder_configs.get("sr", 48000)
+
+        # Convert to int16
+        audio_int16 = (audio * 32768).astype(np.int16)
+
+        # Calculate duration
+        duration = len(audio_int16) / output_sr
+
+        # Return as base64
+        audio_bytes = audio_int16.tobytes()
+        audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+
+        return JSONResponse(content={
+            "audio_base64": audio_base64,
+            "sample_rate": output_sr,
+            "duration_seconds": duration,
+            "shape": [len(audio_int16)],
+            "dtype": "int16",
+            "success": True,
+            "applied_effects": {
+                "tone": float(tone),
+                "stretch": float(stretch),
+                "amplitude": float(amplitude),
+                "active_region": request.active_region,
+                "original_frames": time_frames,
+                "modified_frames": mel_modified.shape[1]
+            }
+        })
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }
+        )
+
+
 if __name__ == "__main__":
     try:
         if host == "None":  # 在调用时使用 -a None 参数，可以让api监听双栈
