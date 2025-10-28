@@ -1013,8 +1013,30 @@ class TTS:
             semantic_data = self.generate_semantic_tokens(inputs)
             semantic_data["super_sampling"] = inputs.get("super_sampling", False)
 
+            semantic_tokens = None
+
+            if 'semantic_data' in semantic_data and isinstance(semantic_data['semantic_data'], list):
+                try:
+                    import numpy as np
+                    first_batch = semantic_data['semantic_data'][0] if semantic_data['semantic_data'] else None
+                    if first_batch and 'pred_semantic_list' in first_batch:
+                        pred_semantic_list = first_batch['pred_semantic_list']
+                        all_tokens = []
+                        for pred_semantic in pred_semantic_list:
+                            if isinstance(pred_semantic, np.ndarray):
+                                all_tokens.extend(pred_semantic.flatten().tolist())
+                            elif isinstance(pred_semantic, list):
+                                all_tokens.extend(pred_semantic)
+                        semantic_tokens = all_tokens
+                except Exception:
+                    pass
+
             for result in self.vocoder_inference(semantic_data):
-                yield result
+                if isinstance(result, tuple) and len(result) == 2:
+                    sr, audio_data = result
+                    yield sr, audio_data, semantic_tokens
+                else:
+                    yield result
 
         except Exception as e:
             traceback.print_exc()

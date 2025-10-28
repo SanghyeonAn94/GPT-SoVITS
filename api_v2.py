@@ -469,30 +469,45 @@ async def tts_handle(req: dict):
             )
 
         else:
-            # Collect all audio samples
+            # Collect all audio samples with their semantic tokens
             audio_samples = []
-            for sr, audio_data in tts_generator:
+            all_semantic_tokens = []
+
+            for sr, audio_data, current_tokens in tts_generator:
                 audio_bytes = pack_audio(BytesIO(), audio_data, sr, media_type).getvalue()
-                # Convert to base64 for JSON response when n_samples > 1
                 if n_samples > 1:
                     import base64
                     audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
                     audio_samples.append({
                         "audio_data": audio_b64,
                         "sample_rate": sr,
-                        "format": media_type
+                        "format": media_type,
+                        "semantic_tokens": current_tokens
                     })
+                    if current_tokens is not None:
+                        all_semantic_tokens.append(current_tokens)
                 else:
                     audio_samples.append(audio_bytes)
+                    if current_tokens is not None:
+                        all_semantic_tokens.append(current_tokens)
 
-            # Return JSON response for multiple samples, binary for single sample
             if n_samples > 1:
-                return JSONResponse(content={
+                response_content = {
                     "n_samples": len(audio_samples),
                     "samples": audio_samples
-                })
+                }
+                return JSONResponse(content=response_content)
             else:
-                return Response(audio_samples[0], media_type=f"audio/{media_type}")
+                import base64
+                audio_b64 = base64.b64encode(audio_samples[0]).decode('utf-8')
+                response_content = {
+                    "audio_data": audio_b64,
+                    "sample_rate": sr,
+                    "format": media_type
+                }
+                if all_semantic_tokens:
+                    response_content["semantic_tokens"] = all_semantic_tokens[0]
+                return JSONResponse(content=response_content)
     except Exception as e:
         return JSONResponse(status_code=400, content={"message": "tts failed", "Exception": str(e)})
 
