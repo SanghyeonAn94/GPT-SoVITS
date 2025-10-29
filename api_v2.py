@@ -491,6 +491,29 @@ async def tts_handle(req: dict):
                     if current_tokens is not None:
                         all_semantic_tokens.append(current_tokens)
 
+            # Extract phones AFTER generation is complete
+            all_phones = []
+            try:
+                semantic_data = tts_pipeline.semantic_processor.last_generated_semantic_data
+                if semantic_data and "semantic_data" in semantic_data:
+                    first_result = semantic_data["semantic_data"][0]
+                    batch_phones_tensors = first_result.get("batch_phones", [])
+                    # Convert phone tensors to lists
+                    phones_lists = []
+                    for phone_tensor in batch_phones_tensors:
+                        phones_lists.append(phone_tensor.cpu().tolist())
+                    # Flatten all phones into single list
+                    if phones_lists:
+                        all_phones_flat = []
+                        for phone_list in phones_lists:
+                            all_phones_flat.extend(phone_list)
+                        all_phones.append(all_phones_flat)
+                        print(f"[TTS] Successfully extracted {len(all_phones_flat)} phones")
+            except Exception as e:
+                print(f"[TTS] Warning: Could not extract phones: {e}")
+                import traceback
+                traceback.print_exc()
+
             if n_samples > 1:
                 response_content = {
                     "n_samples": len(audio_samples),
@@ -507,6 +530,8 @@ async def tts_handle(req: dict):
                 }
                 if all_semantic_tokens:
                     response_content["semantic_tokens"] = all_semantic_tokens[0]
+                if all_phones:
+                    response_content["phones"] = all_phones[0]
                 return JSONResponse(content=response_content)
     except Exception as e:
         return JSONResponse(status_code=400, content={"message": "tts failed", "Exception": str(e)})
@@ -649,64 +674,78 @@ async def tts_generate_semantic(request: TTS_Request):
 @APP.post("/tts/vocoder-inference")
 async def tts_vocoder_inference(request: dict):
     """
-    Synthesize audio from semantic tokens (Semantic-to-Speech).
+    Synthesize audio from semantic tokens (Semantic-to-Speech) using existing TTS vocoder pipeline.
 
-    Request body (simplified for voice rework):
+    Request body (for voice rework feature):
     {
         "semantic_tokens": [1, 2, 3, ...],  # Direct list of token IDs
+        "phones": [10, 20, 30, ...],        # Phone IDs corresponding to semantic tokens
         "ref_audio_path": "path/to/reference.wav",  # Reference audio for vocoder
-        "super_sampling": false
+        "speed": 1.0,                       # Speed factor (optional)
+        "sample_steps": 32                  # CFM sample steps for V3/V4 (optional)
     }
     """
     import base64
     import io
     import soundfile as sf
     import torch
+    import numpy as np
 
     try:
         semantic_tokens = request.get("semantic_tokens")
         if not semantic_tokens:
             return JSONResponse(status_code=400, content={"message": "semantic_tokens is required"})
 
+        phones = request.get("phones")
+        if not phones:
+            return JSONResponse(status_code=400, content={"message": "phones is required"})
+
         ref_audio_path = request.get("ref_audio_path")
         if not ref_audio_path:
             return JSONResponse(status_code=400, content={"message": "ref_audio_path is required"})
 
-        super_sampling = request.get("super_sampling", False)
+        speed = request.get("speed", 1.0)
+        sample_steps = request.get("sample_steps", 32)
 
         # Set reference audio for vocoder
         tts_pipeline.set_ref_audio(ref_audio_path)
 
-        # Convert token list to tensor
-        pred_semantic = torch.LongTensor(semantic_tokens).unsqueeze(0)
-        pred_semantic = pred_semantic.to(tts_pipeline.configs.device)
+        # Convert lists to tensors
+        pred_semantic = torch.LongTensor(semantic_tokens).unsqueeze(0).unsqueeze(0).to(tts_pipeline.configs.device)
+        phones_tensor = torch.LongTensor(phones).unsqueeze(0).to(tts_pipeline.configs.device)
 
-        # Generate audio using V4 pipeline (CFM + BigVGAN)
-        # For V4: semantic → CFM → mel-spectrogram → BigVGAN → audio
-        if tts_pipeline.configs.version == "v4":
-            # Use CFM to generate mel-spectrogram
-            with torch.no_grad():
-                mel = tts_pipeline.t2s_model.cfm_forward(
-                    pred_semantic,
-                    torch.LongTensor([pred_semantic.shape[1]]).to(tts_pipeline.configs.device)
-                )
-
-                # Use BigVGAN vocoder to generate audio
-                audio = tts_pipeline.vocoder.forward(mel).squeeze(0).squeeze(0)
-                audio = audio.cpu().numpy()
+        # Use existing TTS pipeline methods
+        # V3/V4 use vocoder (CFM + BigVGAN), V1/V2 use VITS decoder
+        if tts_pipeline.configs.use_vocoder:
+            # V3/V4 path: using_vocoder_synthesis
+            audio_fragment = tts_pipeline.using_vocoder_synthesis(
+                pred_semantic,
+                phones_tensor,
+                speed=speed,
+                sample_steps=sample_steps
+            )
         else:
-            # For other versions, use standard VITS vocoder
-            refer_spec = tts_pipeline.prompt_cache["refer_spec"][0][0]
+            # V1/V2 path: VITS decoder
+            refer_spec = tts_pipeline.prompt_cache["refer_spec"][0]
+            if isinstance(refer_spec, tuple):
+                refer_spec = refer_spec[0]
             refer_spec = refer_spec.to(dtype=tts_pipeline.precision, device=tts_pipeline.configs.device)
 
             with torch.no_grad():
-                audio = tts_pipeline.vits_model.decode(
+                audio_fragment = tts_pipeline.vits_model.decode(
                     pred_semantic,
-                    refer_spec
-                ).detach().cpu().numpy()[0, 0]
+                    phones_tensor,
+                    [refer_spec],
+                    speed=speed
+                ).detach()[0, 0, :]
+
+        # Convert tensor to numpy and ensure float32 dtype (soundfile requirement)
+        audio = audio_fragment.cpu().numpy()
+        if audio.dtype == np.float16:
+            audio = audio.astype(np.float32)
 
         # Get sample rate
-        sr = tts_pipeline.configs.sampling_rate
+        sr = tts_pipeline.configs.sampling_rate if not tts_pipeline.configs.use_vocoder else tts_pipeline.vocoder_configs["sr"]
 
         # Convert to WAV
         audio_bytes_io = io.BytesIO()
@@ -725,6 +764,175 @@ async def tts_vocoder_inference(request: dict):
         import traceback
         traceback.print_exc()
         return JSONResponse(status_code=500, content={"message": "Failed to synthesize audio", "error": str(e)})
+
+
+@APP.post("/tts/mel-inpainting")
+async def tts_mel_inpainting(request: dict):
+    """
+    Mel-spectrogram inpainting API for voice rework feature
+
+    Request:
+    {
+        "audio_path": "path/to/audio.wav",       # Original audio file path
+        "active_regions": [[start1, end1], ...], # Regions to regenerate (in seconds)
+        "semantic_tokens": [1, 2, 3, ...],       # Original semantic tokens
+        "phones": [10, 20, 30, ...],             # Original phones
+        "ref_audio_path": "path/to/ref.wav",     # Reference audio
+        "sample_steps": 32,                      # CFM denoising steps
+        "noise_strength": 0.5,                   # Noise strength (0.0-1.0)
+        "blur_boundaries": true                  # Apply boundary blurring
+    }
+    """
+    import base64
+    import io
+    import soundfile as sf
+    import torch
+    import numpy as np
+    import librosa
+
+    try:
+        # Parse request
+        audio_path = request.get("audio_path")
+        active_regions = request.get("active_regions", [])  # [[start, end], ...]
+        semantic_tokens = request.get("semantic_tokens")
+        phones = request.get("phones")
+        ref_audio_path = request.get("ref_audio_path")
+        sample_steps = request.get("sample_steps", 32)
+        noise_strength = request.get("noise_strength", 0.5)
+        blur_boundaries = request.get("blur_boundaries", True)
+
+        # Validation
+        if not audio_path:
+            return JSONResponse(status_code=400, content={"message": "audio_path is required"})
+        if not semantic_tokens or not phones:
+            return JSONResponse(status_code=400, content={"message": "semantic_tokens and phones are required"})
+        if not active_regions:
+            return JSONResponse(status_code=400, content={"message": "active_regions is required"})
+
+        print(f"[DEBUG] API Mel-Inpainting: audio_path={audio_path}")
+        print(f"[DEBUG] API Mel-Inpainting: active_regions={active_regions}")
+        print(f"[DEBUG] API Mel-Inpainting: semantic_tokens count={len(semantic_tokens)}, phones count={len(phones)}")
+        print(f"[DEBUG] API Mel-Inpainting: sample_steps={sample_steps}, noise_strength={noise_strength}, blur_boundaries={blur_boundaries}")
+
+        # 1. Load original audio
+        print(f"[DEBUG] API Mel-Inpainting: loading audio from {audio_path}")
+        audio, sr = librosa.load(audio_path, sr=None)
+        audio_tensor = torch.from_numpy(audio).unsqueeze(0).to(tts_pipeline.configs.device)
+        print(f"[DEBUG] API Mel-Inpainting: loaded audio, sr={sr}, duration={len(audio)/sr:.2f}s")
+
+        # 2. Resample to target sr
+        tgt_sr = 24000 if tts_pipeline.configs.version == "v3" else 32000
+        print(f"[DEBUG] API Mel-Inpainting: version={tts_pipeline.configs.version}, target_sr={tgt_sr}")
+        if sr != tgt_sr:
+            from GPT_SoVITS.TTS_infer_pack.TTS import resample
+            audio_tensor = resample(audio_tensor, sr, tgt_sr, tts_pipeline.configs.device)
+            print(f"[DEBUG] API Mel-Inpainting: resampled from {sr} to {tgt_sr}")
+
+        # 3. Extract mel-spectrogram
+        from GPT_SoVITS.TTS_infer_pack.TTS import mel_fn, mel_fn_v4, norm_spec
+        mel_extractor = mel_fn if tts_pipeline.configs.version == "v3" else mel_fn_v4
+        original_mel = mel_extractor(audio_tensor)  # [1, 100, T_mel]
+        original_mel = norm_spec(original_mel)
+        print(f"[DEBUG] API Mel-Inpainting: extracted mel, shape={original_mel.shape}")
+
+        # 4. Create inpainting mask
+        hop_size = 256 if tts_pipeline.configs.version == "v3" else 320
+        print(f"[DEBUG] API Mel-Inpainting: hop_size={hop_size}, creating mask...")
+        inpaint_mask = torch.zeros((1, 1, original_mel.shape[2]),
+                                    device=original_mel.device,
+                                    dtype=original_mel.dtype)
+
+        for start_sec, end_sec in active_regions:
+            start_frame = int(start_sec * tgt_sr / hop_size)
+            end_frame = int(end_sec * tgt_sr / hop_size)
+            start_frame = max(0, min(start_frame, original_mel.shape[2] - 1))
+            end_frame = max(start_frame + 1, min(end_frame, original_mel.shape[2]))
+            inpaint_mask[:, :, start_frame:end_frame] = 1.0
+            print(f"[DEBUG] API Mel-Inpainting: region [{start_sec:.2f}s, {end_sec:.2f}s] → frames [{start_frame}, {end_frame}]")
+
+        # 5. Get condition features from semantic tokens and phones
+        print(f"[DEBUG] API Mel-Inpainting: encoding condition features...")
+        pred_semantic = torch.LongTensor(semantic_tokens).unsqueeze(0).unsqueeze(0).to(tts_pipeline.configs.device)
+        phones_tensor = torch.LongTensor(phones).unsqueeze(0).to(tts_pipeline.configs.device)
+
+        # Set reference audio
+        if ref_audio_path:
+            print(f"[DEBUG] API Mel-Inpainting: setting reference audio: {ref_audio_path}")
+            tts_pipeline.set_ref_audio(ref_audio_path)
+
+        raw_entry = tts_pipeline.prompt_cache["refer_spec"][0]
+        if isinstance(raw_entry, tuple):
+            raw_entry = raw_entry[0]
+        refer_spec = raw_entry.to(dtype=tts_pipeline.precision, device=tts_pipeline.configs.device)
+
+        # Encode to get condition features
+        condition_features, ge = tts_pipeline.vits_model.decode_encp(
+            pred_semantic, phones_tensor, refer_spec
+        )  # [1, 512, T_fea]
+        print(f"[DEBUG] API Mel-Inpainting: condition_features shape={condition_features.shape}")
+
+        # 6. Align lengths (interpolate if needed)
+        if condition_features.shape[2] != original_mel.shape[2]:
+            print(f"[DEBUG] API Mel-Inpainting: aligning lengths: {condition_features.shape[2]} → {original_mel.shape[2]}")
+            condition_features = torch.nn.functional.interpolate(
+                condition_features,
+                size=original_mel.shape[2],
+                mode='linear',
+                align_corners=False
+            )
+            print(f"[DEBUG] API Mel-Inpainting: aligned features to {condition_features.shape[2]} frames")
+
+        # 7. Execute mel-inpainting
+        print(f"[DEBUG] API Mel-Inpainting: calling TTS.using_vocoder_inpainting()...")
+        audio_result = tts_pipeline.using_vocoder_inpainting(
+            original_mel=original_mel,
+            inpaint_mask=inpaint_mask,
+            condition_features=condition_features,
+            sample_steps=sample_steps,
+            noise_strength=noise_strength,
+            blur_boundaries=blur_boundaries,
+            blur_kernel_size=5
+        )
+        print(f"[DEBUG] API Mel-Inpainting: inpainting complete, audio_result shape={audio_result.shape}")
+
+        # 8. Convert to numpy and ensure float32
+        print(f"[DEBUG] API Mel-Inpainting: converting to numpy...")
+        audio = audio_result.cpu().numpy()
+        if audio.dtype == np.float16:
+            audio = audio.astype(np.float32)
+            print(f"[DEBUG] API Mel-Inpainting: converted dtype from float16 to float32")
+
+        # 9. Get sample rate
+        sr_out = tts_pipeline.vocoder_configs["sr"]
+
+        # 10. Convert to WAV and encode to base64
+        print(f"[DEBUG] API Mel-Inpainting: encoding to WAV base64...")
+        audio_bytes_io = io.BytesIO()
+        sf.write(audio_bytes_io, audio, sr_out, format='wav')
+        audio_bytes = audio_bytes_io.getvalue()
+        audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+
+        print(f"[DEBUG] API Mel-Inpainting: SUCCESS! Output sr={sr_out}, duration={len(audio)/sr_out:.2f}s, base64 length={len(audio_base64)}")
+
+        return JSONResponse(status_code=200, content={
+            "message": "success",
+            "audio_base64": audio_base64,
+            "sample_rate": sr_out,
+            "format": "wav",
+            "inpainted_regions": active_regions,
+            "noise_strength": noise_strength,
+            "blur_boundaries": blur_boundaries
+        })
+
+    except Exception as e:
+        import traceback
+        print(f"[Mel-Inpainting] Error: {str(e)}")
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={
+            "message": "Mel-inpainting failed",
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        })
 
 
 @APP.get("/set_refer_audio")

@@ -8,6 +8,7 @@ from tqdm import tqdm
 class TTSSemantic:
     def __init__(self, parent_tts):
         self.parent = parent_tts
+        self.last_generated_semantic_data = None
 
     def generate_semantic_tokens(self, inputs: dict) -> dict:
         self.parent.stop_flag = False
@@ -241,7 +242,7 @@ class TTSSemantic:
                 "batch_phones": all_batch_phones
             })
 
-        return {
+        result = {
             "semantic_data": semantic_results,
             "metadata": {
                 "batch_index_list": batch_index_list if not return_fragment else None,
@@ -259,3 +260,7 @@ class TTSSemantic:
             },
             "empty_result": False
         }
+
+        self.last_generated_semantic_data = result
+
+        return result

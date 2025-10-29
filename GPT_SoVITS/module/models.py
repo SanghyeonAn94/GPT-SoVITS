@@ -1024,14 +1024,56 @@ class CFM(torch.nn.Module):
         self.use_conditioner_cache = True
 
     @torch.inference_mode()
-    def inference(self, mu, x_lens, prompt, n_timesteps, temperature=1.0, inference_cfg_rate=0):
-        """Forward diffusion"""
+    def inference(self, mu, x_lens, prompt, n_timesteps, temperature=1.0, inference_cfg_rate=0,
+                  inpaint_mode=False, original_mel=None, inpaint_mask=None, noise_strength=0.5):
+        """
+        Forward diffusion with optional inpainting support
+
+        Args:
+            mu: [B, T, C] - Condition features
+            x_lens: [B] - Sequence lengths
+            prompt: [B, C, T_prompt] - Reference mel-spectrogram
+            n_timesteps: int - Number of denoising steps
+            temperature: float - Sampling temperature
+            inference_cfg_rate: float - Classifier-free guidance rate
+            inpaint_mode: bool - Enable inpainting mode
+            original_mel: [B, C, T] - Original mel-spectrogram (for inpainting)
+            inpaint_mask: [B, 1, T] - Binary mask (1=regenerate, 0=keep)
+            noise_strength: float - Noise strength for inpainting (0.0-1.0)
+
+        Returns:
+            x: [B, C, T] - Generated mel-spectrogram
+        """
         B, T = mu.size(0), mu.size(1)
-        x = torch.randn([B, self.in_channels, T], device=mu.device, dtype=mu.dtype) * temperature
-        prompt_len = prompt.size(-1)
-        prompt_x = torch.zeros_like(x, dtype=mu.dtype)
-        prompt_x[..., :prompt_len] = prompt[..., :prompt_len]
-        x[..., :prompt_len] = 0
+
+        if inpaint_mode:
+            # Inpainting mode: Initialize from blurred/noisy original
+            assert original_mel is not None and inpaint_mask is not None, \
+                "original_mel and inpaint_mask required for inpaint_mode"
+
+            print(f"[DEBUG] CFM Inpainting: original_mel shape={original_mel.shape}, mask shape={inpaint_mask.shape}")
+            active_frames = inpaint_mask.sum().item()
+            total_frames = inpaint_mask.numel() / inpaint_mask.shape[1]  # Total frames
+            print(f"[DEBUG] CFM Inpainting: {active_frames:.0f} active frames out of {total_frames:.0f} ({active_frames/total_frames*100:.1f}%)")
+            print(f"[DEBUG] CFM Inpainting: noise_strength={noise_strength}, temperature={temperature}")
+
+            x = original_mel.clone()
+            # Add noise to active regions
+            noise = torch.randn_like(x) * temperature
+            x = x * (1 - inpaint_mask) + (x * (1 - noise_strength) + noise * noise_strength) * inpaint_mask
+
+            # prompt_x: Use original mel for inactive regions as conditioning
+            prompt_x = original_mel * (1 - inpaint_mask)
+
+            print(f"[DEBUG] CFM Inpainting: initialized x from blurred original, prompt_x uses inactive regions")
+        else:
+            # Original full generation mode
+            x = torch.randn([B, self.in_channels, T], device=mu.device, dtype=mu.dtype) * temperature
+            prompt_len = prompt.size(-1)
+            prompt_x = torch.zeros_like(x, dtype=mu.dtype)
+            prompt_x[..., :prompt_len] = prompt[..., :prompt_len]
+            x[..., :prompt_len] = 0
+
         mu = mu.transpose(2, 1)
         t = 0
         d = 1 / n_timesteps
@@ -1039,6 +1081,7 @@ class CFM(torch.nn.Module):
         text_cfg_cache = None
         dt_cache = None
         d_tensor = torch.ones(x.shape[0], device=x.device, dtype=mu.dtype) * d
+
         for j in range(n_timesteps):
             t_tensor = torch.ones(x.shape[0], device=x.device, dtype=mu.dtype) * t
             # v_pred = model(x, t_tensor, d_tensor, **extra_args)
@@ -1079,9 +1122,23 @@ class CFM(torch.nn.Module):
                 if self.use_conditioner_cache:
                     text_cfg_cache = text_cfg_emb
                 v_pred = v_pred + (v_pred - neg) * inference_cfg_rate
+
             x = x + d * v_pred
             t = t + d
-            x[:, :, :prompt_len] = 0
+
+            if inpaint_mode:
+                # Keep original values in inactive regions
+                x = x * inpaint_mask + original_mel * (1 - inpaint_mask)
+                if j == 0 or j == n_timesteps - 1:
+                    print(f"[DEBUG] CFM Inpainting: step {j+1}/{n_timesteps} - preserving inactive regions")
+            else:
+                # Original: keep prompt region as 0
+                prompt_len = prompt.size(-1)
+                x[:, :, :prompt_len] = 0
+
+        if inpaint_mode:
+            print(f"[DEBUG] CFM Inpainting: completed {n_timesteps} denoising steps")
+
         return x
 
     def forward(self, x1, x_lens, prompt_lens, mu, use_grad_ckpt):

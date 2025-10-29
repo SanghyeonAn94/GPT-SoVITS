@@ -1175,6 +1175,198 @@ class TTS:
 
         return audio
 
+    def using_vocoder_inpainting(
+        self,
+        original_mel: torch.Tensor,
+        inpaint_mask: torch.Tensor,
+        condition_features: torch.Tensor,
+        sample_steps: int = 32,
+        noise_strength: float = 0.5,
+        blur_boundaries: bool = False,
+        blur_kernel_size: int = 5
+    ):
+        """
+        Mel-spectrogram inpainting: regenerate active regions only
+
+        Args:
+            original_mel: [1, 100, T_mel] - Original mel-spectrogram (normalized)
+            inpaint_mask: [1, 1, T_mel] - Binary mask (1=regenerate, 0=keep)
+            condition_features: [1, 512, T_mel] - Condition features from decode_encp
+            sample_steps: int - CFM denoising steps
+            noise_strength: float - Noise strength for active regions (0.0-1.0)
+            blur_boundaries: bool - Apply Gaussian blur to active region boundaries
+            blur_kernel_size: int - Blurring kernel size
+
+        Returns:
+            audio: Generated audio waveform
+        """
+        print(f"[DEBUG] TTS Inpainting: original_mel shape={original_mel.shape}, mask shape={inpaint_mask.shape}")
+        print(f"[DEBUG] TTS Inpainting: condition_features shape={condition_features.shape}")
+        print(f"[DEBUG] TTS Inpainting: sample_steps={sample_steps}, noise_strength={noise_strength}, blur_boundaries={blur_boundaries}")
+
+        # 1. Prompt preparation
+        prompt_semantic_tokens = self.prompt_cache["prompt_semantic"].unsqueeze(0).unsqueeze(0).to(self.configs.device)
+        prompt_phones = torch.LongTensor(self.prompt_cache["phones"]).unsqueeze(0).to(self.configs.device)
+        raw_entry = self.prompt_cache["refer_spec"][0]
+        if isinstance(raw_entry, tuple):
+            raw_entry = raw_entry[0]
+        refer_audio_spec = raw_entry.to(dtype=self.precision, device=self.configs.device)
+
+        fea_ref, ge = self.vits_model.decode_encp(prompt_semantic_tokens, prompt_phones, refer_audio_spec)
+        print(f"[DEBUG] TTS Inpainting: extracted reference features, fea_ref shape={fea_ref.shape}")
+
+        # 2. Reference mel extraction
+        ref_audio: torch.Tensor = self.prompt_cache["raw_audio"]
+        ref_sr = self.prompt_cache["raw_sr"]
+        ref_audio = ref_audio.to(self.configs.device).float()
+        if ref_audio.shape[0] == 2:
+            ref_audio = ref_audio.mean(0).unsqueeze(0)
+
+        tgt_sr = 24000 if self.configs.version == "v3" else 32000
+        if ref_sr != tgt_sr:
+            ref_audio = resample(ref_audio, ref_sr, tgt_sr, self.configs.device)
+
+        mel2 = mel_fn(ref_audio) if self.configs.version == "v3" else mel_fn_v4(ref_audio)
+        mel2 = norm_spec(mel2)
+        T_min = min(mel2.shape[2], fea_ref.shape[2])
+        mel2 = mel2[:, :, :T_min]
+        fea_ref = fea_ref[:, :, :T_min]
+
+        T_ref = self.vocoder_configs["T_ref"]
+        if T_min > T_ref:
+            mel2 = mel2[:, :, -T_ref:]
+            fea_ref = fea_ref[:, :, -T_ref:]
+            T_min = T_ref
+
+        # 3. Optional: Apply boundary blur
+        if blur_boundaries and blur_kernel_size > 0:
+            print(f"[DEBUG] TTS Inpainting: applying boundary blur with kernel_size={blur_kernel_size}")
+            original_mel = self._apply_boundary_blur(original_mel, inpaint_mask, blur_kernel_size)
+            print(f"[DEBUG] TTS Inpainting: boundary blur applied")
+
+        # 4. Chunked inpainting
+        T_chunk = self.vocoder_configs["T_chunk"]
+        chunk_len = T_chunk - T_min
+        print(f"[DEBUG] TTS Inpainting: T_chunk={T_chunk}, T_min={T_min}, chunk_len={chunk_len}")
+        print(f"[DEBUG] TTS Inpainting: total mel frames={original_mel.shape[2]}, processing in chunks...")
+
+        cfm_resss = []
+        idx = 0
+        chunk_idx = 0
+        while True:
+            chunk_idx += 1
+            # Get chunks
+            mel_chunk = original_mel[:, :, idx:idx+chunk_len]
+            mask_chunk = inpaint_mask[:, :, idx:idx+chunk_len]
+            fea_chunk = condition_features[:, :, idx:idx+chunk_len]
+
+            if mel_chunk.shape[-1] == 0:
+                break
+
+            # Pad if last chunk is shorter
+            actual_len = mel_chunk.shape[-1]
+            print(f"[DEBUG] TTS Inpainting: chunk {chunk_idx}, idx={idx}, actual_len={actual_len}")
+            if actual_len < chunk_len:
+                padding = chunk_len - actual_len
+                mel_chunk = torch.nn.functional.pad(mel_chunk, (0, padding), "constant", 0)
+                mask_chunk = torch.nn.functional.pad(mask_chunk, (0, padding), "constant", 0)
+                fea_chunk = torch.nn.functional.pad(fea_chunk, (0, padding), "constant", 0)
+                print(f"[DEBUG] TTS Inpainting: padded last chunk from {actual_len} to {chunk_len} frames")
+
+            idx += chunk_len
+
+            # Concatenate with prompt
+            fea = torch.cat([fea_ref, fea_chunk], 2).transpose(2, 1)
+            mel_with_prompt = torch.cat([mel2, mel_chunk], 2)
+            mask_with_prompt = torch.cat([
+                torch.zeros_like(mel2[:, :1, :]),  # Prompt region: keep (0)
+                mask_chunk
+            ], 2)
+
+            # CFM Inpainting
+            print(f"[DEBUG] TTS Inpainting: calling CFM.inference for chunk {chunk_idx}")
+            cfm_res = self.vits_model.cfm.inference(
+                fea,
+                torch.LongTensor([fea.size(1)]).to(fea.device),
+                mel_with_prompt,
+                sample_steps,
+                inference_cfg_rate=0,
+                inpaint_mode=True,
+                original_mel=mel_with_prompt,
+                inpaint_mask=mask_with_prompt,
+                noise_strength=noise_strength
+            )
+            print(f"[DEBUG] TTS Inpainting: CFM inference complete for chunk {chunk_idx}, output shape={cfm_res.shape}")
+
+            # Remove prompt portion
+            cfm_res = cfm_res[:, :, mel2.shape[2]:]
+
+            # Trim if it was padded
+            if actual_len < chunk_len:
+                cfm_res = cfm_res[:, :, :actual_len]
+                mel_chunk = mel_chunk[:, :, :actual_len]
+                mask_chunk = mask_chunk[:, :, :actual_len]
+                fea_chunk = fea_chunk[:, :, :actual_len]
+
+            # Update sliding window (preserve inactive regions from original)
+            mel2 = cfm_res[:, :, -T_min:] * mask_chunk[:, :, -T_min:] + \
+                   mel_chunk[:, :, -T_min:] * (1 - mask_chunk[:, :, -T_min:])
+            fea_ref = fea_chunk[:, :, -T_min:]
+
+            cfm_resss.append(cfm_res)
+
+        # 5. Concatenate and denormalize
+        print(f"[DEBUG] TTS Inpainting: processed {len(cfm_resss)} chunks, concatenating...")
+        cfm_res = torch.cat(cfm_resss, 2)
+        print(f"[DEBUG] TTS Inpainting: concatenated mel shape={cfm_res.shape}, denormalizing...")
+        cfm_res = denorm_spec(cfm_res)
+
+        # 6. Vocoder
+        print(f"[DEBUG] TTS Inpainting: running vocoder...")
+        with torch.inference_mode():
+            wav_gen = self.vocoder(cfm_res)
+            audio = wav_gen[0][0]
+
+        print(f"[DEBUG] TTS Inpainting: vocoder complete, audio shape={audio.shape}, duration={len(audio)/self.vocoder_configs['sr']:.2f}s")
+        return audio
+
+    def _apply_boundary_blur(self, mel: torch.Tensor, mask: torch.Tensor, kernel_size: int):
+        """
+        Apply Gaussian blur to active region boundaries
+
+        Args:
+            mel: [1, 100, T] - Mel-spectrogram
+            mask: [1, 1, T] - Binary mask
+            kernel_size: int - Gaussian kernel size
+
+        Returns:
+            mel_blurred: [1, 100, T] - Mel with blurred boundaries
+        """
+        import torch.nn.functional as F
+
+        print(f"[DEBUG] Boundary Blur: kernel_size={kernel_size}, mel shape={mel.shape}")
+
+        # Create Gaussian kernel
+        sigma = kernel_size / 3.0
+        x = torch.arange(-kernel_size//2 + 1, kernel_size//2 + 1, dtype=mel.dtype, device=mel.device)
+        gauss = torch.exp(-x**2 / (2 * sigma**2))
+        gauss = gauss / gauss.sum()
+        gauss = gauss.view(1, 1, -1)
+
+        print(f"[DEBUG] Boundary Blur: created Gaussian kernel with sigma={sigma:.2f}")
+
+        # Apply blur to each mel channel
+        mel_blurred = mel.clone()
+        for i in range(mel.shape[1]):
+            mel_channel = mel[:, i:i+1, :]  # [1, 1, T]
+            # 1D convolution along time axis
+            blurred = F.conv1d(mel_channel, gauss, padding=kernel_size//2)
+            # Blend: blurred in active region, original elsewhere
+            mel_blurred[:, i, :] = blurred[:, 0, :] * mask[:, 0, :] + mel_channel[:, 0, :] * (1 - mask[:, 0, :])
+
+        print(f"[DEBUG] Boundary Blur: blurred {mel.shape[1]} mel channels")
+        return mel_blurred
+
     def using_vocoder_synthesis_batched_infer(
         self,
         idx_list: List[int],
