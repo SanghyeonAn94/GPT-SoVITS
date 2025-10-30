@@ -1204,18 +1204,14 @@ class TTS:
         print(f"[DEBUG] TTS Inpainting: condition_features shape={condition_features.shape}")
         print(f"[DEBUG] TTS Inpainting: sample_steps={sample_steps}, noise_strength={noise_strength}, blur_boundaries={blur_boundaries}")
 
-        # 1. Prompt preparation
-        prompt_semantic_tokens = self.prompt_cache["prompt_semantic"].unsqueeze(0).unsqueeze(0).to(self.configs.device)
-        prompt_phones = torch.LongTensor(self.prompt_cache["phones"]).unsqueeze(0).to(self.configs.device)
-        raw_entry = self.prompt_cache["refer_spec"][0]
-        if isinstance(raw_entry, tuple):
-            raw_entry = raw_entry[0]
-        refer_audio_spec = raw_entry.to(dtype=self.precision, device=self.configs.device)
+        # 1. Reference mel extraction (for sliding window prompt)
+        # CRITICAL: Force T_ref to a small value for proper inpainting
+        # Large T_ref (e.g., 500) causes reference to be the entire audio, preventing proper regeneration
+        T_ref_original = self.vocoder_configs.get("T_ref", 500)
+        T_ref = 48  # Force to 48 frames (~0.5 seconds) for inpainting
+        hop_size = 256 if self.configs.version == "v3" else 320
+        print(f"[DEBUG] TTS Inpainting: T_ref_original={T_ref_original}, forcing T_ref={T_ref} for inpainting")
 
-        fea_ref, ge = self.vits_model.decode_encp(prompt_semantic_tokens, prompt_phones, refer_audio_spec)
-        print(f"[DEBUG] TTS Inpainting: extracted reference features, fea_ref shape={fea_ref.shape}")
-
-        # 2. Reference mel extraction
         ref_audio: torch.Tensor = self.prompt_cache["raw_audio"]
         ref_sr = self.prompt_cache["raw_sr"]
         ref_audio = ref_audio.to(self.configs.device).float()
@@ -1226,17 +1222,25 @@ class TTS:
         if ref_sr != tgt_sr:
             ref_audio = resample(ref_audio, ref_sr, tgt_sr, self.configs.device)
 
+        # Truncate reference audio to T_ref frames
+        # This ensures mel2 is small (48 frames instead of 440)
+        max_ref_samples = T_ref * hop_size
+        original_ref_samples = ref_audio.shape[1]
+        if ref_audio.shape[1] > max_ref_samples:
+            ref_audio = ref_audio[:, :max_ref_samples]
+            print(f"[DEBUG] TTS Inpainting: truncated ref_audio from {original_ref_samples} samples ({original_ref_samples/tgt_sr:.2f}s) to {max_ref_samples} samples ({max_ref_samples/tgt_sr:.2f}s)")
+
         mel2 = mel_fn(ref_audio) if self.configs.version == "v3" else mel_fn_v4(ref_audio)
         mel2 = norm_spec(mel2)
-        T_min = min(mel2.shape[2], fea_ref.shape[2])
-        mel2 = mel2[:, :, :T_min]
-        fea_ref = fea_ref[:, :, :T_min]
 
-        T_ref = self.vocoder_configs["T_ref"]
-        if T_min > T_ref:
-            mel2 = mel2[:, :, -T_ref:]
-            fea_ref = fea_ref[:, :, -T_ref:]
-            T_min = T_ref
+        # 2. Extract fea_ref from condition_features (already encoded)
+        # T_min should be constrained by T_ref
+        T_min = min(mel2.shape[2], condition_features.shape[2], T_ref)
+
+        mel2 = mel2[:, :, :T_min]
+        fea_ref = condition_features[:, :, :T_min]
+
+        print(f"[DEBUG] TTS Inpainting: T_ref={T_ref}, T_min={T_min}, mel2 shape={mel2.shape}, fea_ref shape={fea_ref.shape}")
 
         # 3. Optional: Apply boundary blur
         if blur_boundaries and blur_kernel_size > 0:

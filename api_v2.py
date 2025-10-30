@@ -496,19 +496,20 @@ async def tts_handle(req: dict):
             try:
                 semantic_data = tts_pipeline.semantic_processor.last_generated_semantic_data
                 if semantic_data and "semantic_data" in semantic_data:
-                    first_result = semantic_data["semantic_data"][0]
-                    batch_phones_tensors = first_result.get("batch_phones", [])
-                    # Convert phone tensors to lists
-                    phones_lists = []
-                    for phone_tensor in batch_phones_tensors:
-                        phones_lists.append(phone_tensor.cpu().tolist())
-                    # Flatten all phones into single list
-                    if phones_lists:
-                        all_phones_flat = []
-                        for phone_list in phones_lists:
+                    all_phones_flat = []
+                    # Iterate through ALL results, not just first one
+                    for result_idx, result in enumerate(semantic_data["semantic_data"]):
+                        batch_phones_tensors = result.get("batch_phones", [])
+                        # Convert phone tensors to lists
+                        for phone_tensor in batch_phones_tensors:
+                            phone_list = phone_tensor.cpu().tolist()
                             all_phones_flat.extend(phone_list)
+
+                    if all_phones_flat:
                         all_phones.append(all_phones_flat)
-                        print(f"[TTS] Successfully extracted {len(all_phones_flat)} phones")
+                        print(f"[TTS] Successfully extracted {len(all_phones_flat)} phones from {len(semantic_data['semantic_data'])} segments")
+                    else:
+                        print(f"[TTS] Warning: No phones extracted from semantic_data")
             except Exception as e:
                 print(f"[TTS] Warning: Could not extract phones: {e}")
                 import traceback
@@ -766,6 +767,251 @@ async def tts_vocoder_inference(request: dict):
         return JSONResponse(status_code=500, content={"message": "Failed to synthesize audio", "error": str(e)})
 
 
+@APP.post("/tts/mel-regeneration")
+async def tts_mel_regeneration(request: dict):
+    """
+    Hybrid approach: Regenerate active region with margins, then blend.
+
+    This is simpler and more effective than mel-inpainting:
+    1. Extract semantic tokens for active_region + margins
+    2. Generate new mel using TTS (using_vocoder_synthesis)
+    3. Blend with original mel using crossfade at margins
+    4. Run vocoder to get final audio
+
+    Request:
+    {
+        "audio_path": "path/to/audio.wav",
+        "active_regions": [[start, end], ...],  # Regions to regenerate (seconds)
+        "semantic_tokens": [1, 2, 3, ...],      # Original semantic tokens
+        "phones": [10, 20, 30, ...],            # Original phones
+        "ref_audio_path": "path/to/ref.wav",    # Reference audio for style
+        "margin_sec": 0.2,                      # Margin duration (seconds) for crossfade
+        "crossfade_frames": 10                  # Crossfade duration in mel frames
+    }
+    """
+    import base64
+    import io
+    import soundfile as sf
+    import torch
+    import numpy as np
+    import librosa
+
+    try:
+        # Parse request
+        audio_path = request.get("audio_path")
+        active_regions = request.get("active_regions", [])
+        semantic_tokens = request.get("semantic_tokens")
+        phones = request.get("phones")
+        ref_audio_path = request.get("ref_audio_path")
+        margin_sec = request.get("margin_sec", 0.2)
+        crossfade_frames = request.get("crossfade_frames", 10)
+
+        # Validation
+        if not audio_path:
+            return JSONResponse(status_code=400, content={"message": "audio_path is required"})
+        if not semantic_tokens or not phones:
+            return JSONResponse(status_code=400, content={"message": "semantic_tokens and phones are required"})
+        if not active_regions:
+            return JSONResponse(status_code=400, content={"message": "active_regions is required"})
+
+        print(f"[DEBUG] API Mel-Regeneration: audio_path={audio_path}")
+        print(f"[DEBUG] API Mel-Regeneration: active_regions={active_regions}")
+        print(f"[DEBUG] API Mel-Regeneration: semantic_tokens count={len(semantic_tokens)}, phones count={len(phones)}")
+        print(f"[DEBUG] API Mel-Regeneration: margin_sec={margin_sec}, crossfade_frames={crossfade_frames}")
+
+        # 1. Load original audio and extract mel
+        print(f"[DEBUG] API Mel-Regeneration: loading original audio...")
+        audio, sr = librosa.load(audio_path, sr=None)
+        audio_tensor = torch.from_numpy(audio).unsqueeze(0).to(tts_pipeline.configs.device)
+
+        # CRITICAL: V4 vocoder outputs 48kHz but accepts 32kHz mel!
+        # Mel extraction uses 32kHz base (mel_fn_v4), vocoder upsamples to 48kHz
+        tgt_sr = 24000 if tts_pipeline.configs.version == "v3" else 32000  # Mel extraction sr
+        vocoder_output_sr = tts_pipeline.vocoder_configs["sr"]  # Vocoder output sr (48kHz for V4)
+
+        if sr != tgt_sr:
+            from GPT_SoVITS.TTS_infer_pack.TTS import resample
+            audio_tensor = resample(audio_tensor, sr, tgt_sr, tts_pipeline.configs.device)
+            print(f"[DEBUG] API Mel-Regeneration: resampled from {sr} to {tgt_sr} for mel extraction")
+
+        from GPT_SoVITS.TTS_infer_pack.TTS import mel_fn, mel_fn_v4, norm_spec
+
+        # Use standard mel extractors (32kHz for V4, not 48kHz!)
+        mel_extractor = mel_fn if tts_pipeline.configs.version == "v3" else mel_fn_v4
+
+        original_mel = mel_extractor(audio_tensor)
+        original_mel = norm_spec(original_mel)
+        print(f"[DEBUG] API Mel-Regeneration: original_mel shape={original_mel.shape}, tgt_sr={tgt_sr}, vocoder_sr={vocoder_output_sr}")
+
+        # 2. Calculate active region with margins
+        hop_size = 256 if tts_pipeline.configs.version == "v3" else 320  # Mel hop size, not vocoder upsample
+        total_duration = len(audio) / sr
+        total_frames = original_mel.shape[2]
+
+        # For simplicity, handle only first active region
+        start_sec, end_sec = active_regions[0]
+
+        # CRITICAL FIX: Active region is inverted!
+        # When user specifies [A, B], they want to regenerate region [0, A] (NOT [A, B])
+        # So we need to extract tokens for [0, A] region
+        # Invert the active region
+        inverted_start_sec = 0
+        inverted_end_sec = start_sec
+
+        print(f"[DEBUG] API Mel-Regeneration: USER active region [{start_sec:.2f}s, {end_sec:.2f}s]")
+        print(f"[DEBUG] API Mel-Regeneration: INVERTED to regenerate region [{inverted_start_sec:.2f}s, {inverted_end_sec:.2f}s]")
+
+        # Use inverted region for extraction
+        start_sec = inverted_start_sec
+        end_sec = inverted_end_sec
+
+        # Add margins
+        extended_start_sec = max(0, start_sec - margin_sec)
+        extended_end_sec = min(total_duration, end_sec + margin_sec)
+
+        # Convert to frames
+        extended_start_frame = int(extended_start_sec * tgt_sr / hop_size)
+        extended_end_frame = int(extended_end_sec * tgt_sr / hop_size)
+        active_start_frame = int(start_sec * tgt_sr / hop_size)
+        active_end_frame = int(end_sec * tgt_sr / hop_size)
+
+        print(f"[DEBUG] API Mel-Regeneration: active region [{start_sec:.2f}s, {end_sec:.2f}s] → frames [{active_start_frame}, {active_end_frame}]")
+        print(f"[DEBUG] API Mel-Regeneration: with margins [{extended_start_sec:.2f}s, {extended_end_sec:.2f}s] → frames [{extended_start_frame}, {extended_end_frame}]")
+
+        # 3. Extract semantic tokens + phones for extended region
+        extended_start_idx = int(len(semantic_tokens) * extended_start_frame / total_frames)
+        extended_end_idx = int(len(semantic_tokens) * extended_end_frame / total_frames)
+        extended_end_idx = max(extended_start_idx + 1, min(extended_end_idx, len(semantic_tokens)))
+
+        semantic_tokens_extended = semantic_tokens[extended_start_idx:extended_end_idx]
+
+        phones_start_idx = int(len(phones) * extended_start_frame / total_frames)
+        phones_end_idx = int(len(phones) * extended_end_frame / total_frames)
+        phones_end_idx = max(phones_start_idx + 1, min(phones_end_idx, len(phones)))
+
+        phones_extended = phones[phones_start_idx:phones_end_idx]
+
+        print(f"[DEBUG] API Mel-Regeneration: extended semantic_tokens[{extended_start_idx}:{extended_end_idx}] = {len(semantic_tokens_extended)} tokens")
+        print(f"[DEBUG] API Mel-Regeneration: extended phones[{phones_start_idx}:{phones_end_idx}] = {len(phones_extended)} phones")
+
+        # 4. Generate new mel for extended region using TTS
+        print(f"[DEBUG] API Mel-Regeneration: generating new mel via TTS...")
+        if ref_audio_path:
+            tts_pipeline.set_ref_audio(ref_audio_path)
+
+        # IMPORTANT: Initialize prompt_cache["phones"] manually
+        # using_vocoder_synthesis() expects phones in the cache, but set_ref_audio() doesn't set it
+        tts_pipeline.prompt_cache["phones"] = phones_extended
+
+        semantic_tokens_tensor = torch.LongTensor(semantic_tokens_extended).unsqueeze(0).unsqueeze(0).to(tts_pipeline.configs.device)
+        phones_tensor = torch.LongTensor(phones_extended).unsqueeze(0).to(tts_pipeline.configs.device)
+
+        # Generate audio (which internally generates mel)
+        new_audio = tts_pipeline.using_vocoder_synthesis(
+            semantic_tokens_tensor,
+            phones_tensor,
+            speed=1.0,
+            sample_steps=32
+        )
+        print(f"[DEBUG] API Mel-Regeneration: generated audio length={len(new_audio)} samples")
+
+        # Extract mel from generated audio
+        # IMPORTANT: Convert to float32 to avoid cuFFT half precision error with non-power-of-2 lengths
+        new_audio_tensor = new_audio.unsqueeze(0) if new_audio.dim() == 1 else new_audio
+        new_audio_tensor = new_audio_tensor.float()
+
+        # CRITICAL: Vocoder outputs 48kHz but mel_fn_v4 expects 32kHz!
+        # Need to downsample vocoder output before mel extraction
+        print(f"[DEBUG] API Mel-Regeneration: vocoder output sr={vocoder_output_sr}, mel extraction sr={tgt_sr}")
+
+        if vocoder_output_sr != tgt_sr:
+            from GPT_SoVITS.TTS_infer_pack.TTS import resample
+            print(f"[DEBUG] API Mel-Regeneration: resampling generated audio from {vocoder_output_sr} to {tgt_sr}")
+            new_audio_tensor = resample(new_audio_tensor, vocoder_output_sr, tgt_sr, tts_pipeline.configs.device)
+
+        new_mel = mel_extractor(new_audio_tensor)
+        new_mel = norm_spec(new_mel)
+        print(f"[DEBUG] API Mel-Regeneration: generated new_mel shape={new_mel.shape}")
+
+        # 5. Blend: Replace active region + crossfade at margins
+        # TODO: Implement mel crossfade blending
+        print(f"[DEBUG] API Mel-Regeneration: blending with original mel...")
+
+        # For now, simple replacement (will add crossfade next)
+        final_mel = original_mel.clone()
+
+        # Calculate how much of new_mel to use
+        new_mel_frames = new_mel.shape[2]
+        target_frames = extended_end_frame - extended_start_frame
+
+        # Align new_mel to target frames if needed
+        if new_mel_frames != target_frames:
+            print(f"[DEBUG] API Mel-Regeneration: aligning new_mel: {new_mel_frames} → {target_frames}")
+            if new_mel_frames > target_frames:
+                # Trim: center crop to target length
+                start_trim = (new_mel_frames - target_frames) // 2
+                new_mel = new_mel[:, :, start_trim:start_trim + target_frames]
+                print(f"[DEBUG] API Mel-Regeneration: trimmed new_mel from center [{start_trim}:{start_trim + target_frames}]")
+            else:
+                # Pad: zero-pad to target length (shouldn't happen often)
+                pad_left = (target_frames - new_mel_frames) // 2
+                pad_right = target_frames - new_mel_frames - pad_left
+                new_mel = torch.nn.functional.pad(new_mel, (pad_left, pad_right))
+                print(f"[DEBUG] API Mel-Regeneration: padded new_mel [{pad_left}, {pad_right}]")
+
+        # Replace extended region
+        final_mel[:, :, extended_start_frame:extended_end_frame] = new_mel
+        print(f"[DEBUG] API Mel-Regeneration: replaced frames [{extended_start_frame}:{extended_end_frame}]")
+
+        # 6. Run vocoder
+        print(f"[DEBUG] API Mel-Regeneration: running vocoder...")
+        print(f"[DEBUG] API Mel-Regeneration: final_mel shape BEFORE denorm={final_mel.shape}")
+        from GPT_SoVITS.TTS_infer_pack.TTS import denorm_spec
+        final_mel_denorm = denorm_spec(final_mel)
+        print(f"[DEBUG] API Mel-Regeneration: final_mel shape AFTER denorm={final_mel_denorm.shape}")
+
+        # Match vocoder precision (FP16 if model is half, FP32 otherwise)
+        if tts_pipeline.configs.is_half:
+            final_mel_denorm = final_mel_denorm.half()
+
+        print(f"[DEBUG] API Mel-Regeneration: calling vocoder with mel shape={final_mel_denorm.shape}")
+        with torch.inference_mode():
+            final_audio = tts_pipeline.vocoder(final_mel_denorm)
+            print(f"[DEBUG] API Mel-Regeneration: vocoder raw output shape={final_audio.shape}")
+            final_audio = final_audio[0][0].cpu().numpy()
+
+        expected_samples = final_mel.shape[2] * hop_size
+        actual_samples = len(final_audio)
+        print(f"[DEBUG] API Mel-Regeneration: expected {expected_samples} samples ({expected_samples/tgt_sr:.2f}s), got {actual_samples} samples ({actual_samples/tgt_sr:.2f}s)")
+        print(f"[DEBUG] API Mel-Regeneration: vocoder complete, audio shape={final_audio.shape}")
+
+        # 7. Convert to base64
+        # soundfile only supports float32/float64/int16/int32, not float16
+        if final_audio.dtype == np.float16:
+            final_audio = final_audio.astype(np.float32)
+
+        # IMPORTANT: Vocoder output is at vocoder_output_sr (48kHz), not tgt_sr (32kHz)
+        # But user expects original sample rate, so return at vocoder sr
+        audio_bytes = io.BytesIO()
+        sf.write(audio_bytes, final_audio, vocoder_output_sr, format='WAV')
+        audio_bytes.seek(0)
+        audio_b64 = base64.b64encode(audio_bytes.read()).decode('utf-8')
+
+        print(f"[DEBUG] API Mel-Regeneration: SUCCESS! sr={vocoder_output_sr}, duration={len(final_audio)/vocoder_output_sr:.2f}s")
+
+        return JSONResponse(content={
+            "audio_base64": audio_b64,
+            "sample_rate": vocoder_output_sr,
+            "duration": len(final_audio) / vocoder_output_sr
+        })
+
+    except Exception as e:
+        print(f"[ERROR] API Mel-Regeneration failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"message": f"Mel-regeneration failed: {str(e)}"})
+
+
 @APP.post("/tts/mel-inpainting")
 async def tts_mel_inpainting(request: dict):
     """
@@ -850,10 +1096,17 @@ async def tts_mel_inpainting(request: dict):
             inpaint_mask[:, :, start_frame:end_frame] = 1.0
             print(f"[DEBUG] API Mel-Inpainting: region [{start_sec:.2f}s, {end_sec:.2f}s] → frames [{start_frame}, {end_frame}]")
 
-        # 5. Get condition features from semantic tokens and phones
-        print(f"[DEBUG] API Mel-Inpainting: encoding condition features...")
-        pred_semantic = torch.LongTensor(semantic_tokens).unsqueeze(0).unsqueeze(0).to(tts_pipeline.configs.device)
+        # 5. Use FULL semantic tokens and phones for context-aware inpainting
+        # CRITICAL: Condition features need the full context for natural regeneration
+        # The mask will specify which regions to regenerate
+        print(f"[DEBUG] API Mel-Inpainting: preparing condition features with FULL semantic context...")
+        print(f"[DEBUG] API Mel-Inpainting: semantic_tokens={len(semantic_tokens)}, phones={len(phones)}, total_mel_frames={original_mel.shape[2]}")
+
+        # Prepare tensors for FULL audio (not just active region)
+        semantic_tokens_tensor = torch.LongTensor(semantic_tokens).unsqueeze(0).unsqueeze(0).to(tts_pipeline.configs.device)
         phones_tensor = torch.LongTensor(phones).unsqueeze(0).to(tts_pipeline.configs.device)
+
+        print(f"[DEBUG] API Mel-Inpainting: semantic_tokens tensor shape={semantic_tokens_tensor.shape}, phones shape={phones_tensor.shape}")
 
         # Set reference audio
         if ref_audio_path:
@@ -865,22 +1118,26 @@ async def tts_mel_inpainting(request: dict):
             raw_entry = raw_entry[0]
         refer_spec = raw_entry.to(dtype=tts_pipeline.precision, device=tts_pipeline.configs.device)
 
-        # Encode to get condition features
+        # Call decode_encp with FULL semantic tokens for complete context
+        # decode_encp will perform its native 4x upsampling
         condition_features, ge = tts_pipeline.vits_model.decode_encp(
-            pred_semantic, phones_tensor, refer_spec
-        )  # [1, 512, T_fea]
-        print(f"[DEBUG] API Mel-Inpainting: condition_features shape={condition_features.shape}")
+            semantic_tokens_tensor, phones_tensor, refer_spec
+        )  # [1, 512, T_fea] where T_fea = T_semantic * 4
+        print(f"[DEBUG] API Mel-Inpainting: decode_encp output shape={condition_features.shape} (4x upsampling from {len(semantic_tokens)} tokens)")
 
-        # 6. Align lengths (interpolate if needed)
+        # 6. Align condition_features to match mel frames
+        # This provides full context for CFM to do context-aware inpainting
         if condition_features.shape[2] != original_mel.shape[2]:
-            print(f"[DEBUG] API Mel-Inpainting: aligning lengths: {condition_features.shape[2]} → {original_mel.shape[2]}")
+            print(f"[DEBUG] API Mel-Inpainting: aligning condition_features: {condition_features.shape[2]} → {original_mel.shape[2]}")
             condition_features = torch.nn.functional.interpolate(
                 condition_features,
                 size=original_mel.shape[2],
                 mode='linear',
                 align_corners=False
             )
-            print(f"[DEBUG] API Mel-Inpainting: aligned features to {condition_features.shape[2]} frames")
+            print(f"[DEBUG] API Mel-Inpainting: aligned to {condition_features.shape[2]} frames")
+        else:
+            print(f"[DEBUG] API Mel-Inpainting: condition_features already aligned ({condition_features.shape[2]} frames)")
 
         # 7. Execute mel-inpainting
         print(f"[DEBUG] API Mel-Inpainting: calling TTS.using_vocoder_inpainting()...")
@@ -1672,75 +1929,73 @@ class MelToAudioRequest(BaseModel):
     amplitude: float
     
 
-@APP.post("/audio-to-mel")
-async def audio_to_mel_v4(request: AudioToMelRequest):
+@APP.post("/audio-to-waveform")
+async def audio_to_waveform(request: AudioToMelRequest):
     """
-    Convert audio file to mel-spectrogram using v4 configuration.
+    Convert audio file to waveform image (PNG).
 
-    V4 uses 32kHz sampling rate for internal mel-spectrogram processing.
+    Generates a visual representation of the audio waveform for UI display.
 
     Args:
         audio_path: Path to audio file
-        return_base64: If True, returns base64 encoded numpy array
+        return_base64: If True, returns base64 encoded PNG image
 
     Returns:
         {
-            "mel_spectrogram": base64 string or file path,
-            "shape": [mel_bins, time_frames],
-            "sample_rate": 32000,
+            "waveform_image": base64 PNG string,
+            "duration": audio duration in seconds,
+            "sample_rate": original sample rate,
             "success": true
         }
     """
     try:
         import base64
-        from GPT_SoVITS.module.mel_processing import mel_spectrogram_torch
-        from tools.my_utils import load_audio
-        import torch
+        import io
+        import matplotlib
+        matplotlib.use('Agg')  # Non-interactive backend
+        import matplotlib.pyplot as plt
+        import librosa
+        import numpy as np
 
-        # V4 mel-spectrogram configuration (32kHz)
-        audio_array = load_audio(request.audio_path, 32000)
-        audio_tensor = torch.FloatTensor(audio_array).unsqueeze(0)
+        # Load audio
+        audio_array, sr = librosa.load(request.audio_path, sr=None, mono=True)
+        duration = len(audio_array) / sr
 
-        # Extract mel-spectrogram with v4 parameters
-        mel = mel_spectrogram_torch(
-            y=audio_tensor,
-            n_fft=1280,
-            num_mels=100,
-            sampling_rate=32000,
-            hop_size=320,
-            win_size=1280,
-            fmin=0,
-            fmax=None,
-            center=False
-        )
+        # Create waveform plot
+        fig, ax = plt.subplots(figsize=(12, 3), dpi=100)
 
-        mel_np = mel.squeeze(0).cpu().numpy()
+        # Plot waveform with darker blue color
+        time_axis = np.linspace(0, duration, len(audio_array))
+        ax.plot(time_axis, audio_array, linewidth=0.5, color='#0D47A1', alpha=0.9)
+        ax.fill_between(time_axis, audio_array, alpha=0.5, color='#1565C0')
 
-        if request.return_base64:
-            # Convert to base64
-            mel_bytes = mel_np.tobytes()
-            mel_base64 = base64.b64encode(mel_bytes).decode('utf-8')
+        # Remove all axes, labels, and ranges
+        ax.axis('off')
 
-            return JSONResponse(content={
-                "mel_spectrogram": mel_base64,
-                "shape": list(mel_np.shape),
-                "dtype": str(mel_np.dtype),
-                "sample_rate": 32000,
-                "success": True
-            })
-        else:
-            # Save to file
-            output_path = request.audio_path.rsplit('.', 1)[0] + '_mel.npy'
-            np.save(output_path, mel_np)
+        # Remove margins - make waveform fill the entire image
+        ax.set_xlim(0, duration)
+        ax.margins(0, 0)
+        plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
 
-            return JSONResponse(content={
-                "mel_spectrogram_path": output_path,
-                "shape": list(mel_np.shape),
-                "sample_rate": 32000,
-                "success": True
-            })
+        plt.tight_layout(pad=0)
+
+        # Convert plot to PNG image
+        img_buffer = io.BytesIO()
+        plt.savefig(img_buffer, format='png', bbox_inches='tight', facecolor='white')
+        plt.close(fig)
+
+        img_buffer.seek(0)
+        img_base64 = base64.b64encode(img_buffer.read()).decode('utf-8')
+
+        return JSONResponse(content={
+            "waveform_image": img_base64,
+            "duration": float(duration),
+            "sample_rate": int(sr),
+            "success": True
+        })
 
     except Exception as e:
+        import traceback
         return JSONResponse(
             status_code=400,
             content={

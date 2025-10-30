@@ -1051,20 +1051,28 @@ class CFM(torch.nn.Module):
             assert original_mel is not None and inpaint_mask is not None, \
                 "original_mel and inpaint_mask required for inpaint_mode"
 
-            print(f"[DEBUG] CFM Inpainting: original_mel shape={original_mel.shape}, mask shape={inpaint_mask.shape}")
+            print(f"[DEBUG] CFM Inpainting: original_mel shape={original_mel.shape}, dtype={original_mel.dtype}")
+            print(f"[DEBUG] CFM Inpainting: mask shape={inpaint_mask.shape}")
+            print(f"[DEBUG] CFM Inpainting: mu dtype={mu.dtype}")
             active_frames = inpaint_mask.sum().item()
             total_frames = inpaint_mask.numel() / inpaint_mask.shape[1]  # Total frames
             print(f"[DEBUG] CFM Inpainting: {active_frames:.0f} active frames out of {total_frames:.0f} ({active_frames/total_frames*100:.1f}%)")
             print(f"[DEBUG] CFM Inpainting: noise_strength={noise_strength}, temperature={temperature}")
 
-            x = original_mel.clone()
+            # Ensure dtype consistency with mu
+            original_mel_converted = original_mel.to(dtype=mu.dtype)
+            inpaint_mask = inpaint_mask.to(dtype=mu.dtype)
+
+            x = original_mel_converted.clone()
+
             # Add noise to active regions
             noise = torch.randn_like(x) * temperature
             x = x * (1 - inpaint_mask) + (x * (1 - noise_strength) + noise * noise_strength) * inpaint_mask
 
             # prompt_x: Use original mel for inactive regions as conditioning
-            prompt_x = original_mel * (1 - inpaint_mask)
+            prompt_x = original_mel_converted * (1 - inpaint_mask)
 
+            print(f"[DEBUG] CFM Inpainting: converted to mu.dtype, x.dtype={x.dtype}, prompt_x.dtype={prompt_x.dtype}")
             print(f"[DEBUG] CFM Inpainting: initialized x from blurred original, prompt_x uses inactive regions")
         else:
             # Original full generation mode
@@ -1127,8 +1135,8 @@ class CFM(torch.nn.Module):
             t = t + d
 
             if inpaint_mode:
-                # Keep original values in inactive regions
-                x = x * inpaint_mask + original_mel * (1 - inpaint_mask)
+                # Keep original values in inactive regions (use converted version)
+                x = x * inpaint_mask + original_mel_converted * (1 - inpaint_mask)
                 if j == 0 or j == n_timesteps - 1:
                     print(f"[DEBUG] CFM Inpainting: step {j+1}/{n_timesteps} - preserving inactive regions")
             else:
