@@ -9,11 +9,12 @@ import numpy as np
 import pandas as pd
 
 from tools.i18n.i18n import I18nAuto
+from GPT_SoVITS.TTS_infer_pack.audio_utils import ensure_minimum_duration
 
 i18n = I18nAuto(language=os.environ.get("language", "Auto"))
 
 
-def load_audio(file, sr):
+def load_audio(file, sr, min_duration=3.0):
     try:
         # https://github.com/openai/whisper/blob/main/whisper/audio.py#L26
         # This launches a subprocess to decode audio while down-mixing and resampling as necessary.
@@ -34,7 +35,10 @@ def load_audio(file, sr):
         )  # Expose the Error
         raise RuntimeError(i18n("音频加载失败"))
 
-    return np.frombuffer(out, np.float32).flatten()
+    audio = np.frombuffer(out, np.float32).flatten()
+    audio = ensure_minimum_duration(audio, sr=sr, min_duration=min_duration)
+
+    return audio
 
 
 def clean_path(path_str: str):

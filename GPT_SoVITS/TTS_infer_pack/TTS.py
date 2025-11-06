@@ -756,20 +756,26 @@ class TTS:
             self.prompt_cache["refer_spec"][0] = spec_audio
 
     def _get_ref_spec(self, ref_audio_path):
+        from .audio_utils import ensure_minimum_duration
+
         raw_audio, raw_sr = torchaudio.load(ref_audio_path)
         raw_audio = raw_audio.to(self.configs.device).float()
+
+        if raw_audio.shape[0] == 2:
+            raw_audio = raw_audio.mean(0).unsqueeze(0)
+
+        raw_audio_np = raw_audio.cpu().numpy()[0]
+        raw_audio_np = ensure_minimum_duration(raw_audio_np, sr=raw_sr, min_duration=3.0)
+        raw_audio = torch.from_numpy(raw_audio_np).unsqueeze(0).to(self.configs.device).float()
+
         self.prompt_cache["raw_audio"] = raw_audio
         self.prompt_cache["raw_sr"] = raw_sr
 
         if raw_sr != self.configs.sampling_rate:
             audio = raw_audio.to(self.configs.device)
-            if audio.shape[0] == 2:
-                audio = audio.mean(0).unsqueeze(0)
             audio = resample(audio, raw_sr, self.configs.sampling_rate, self.configs.device)
         else:
             audio = raw_audio.to(self.configs.device)
-            if audio.shape[0] == 2:
-                audio = audio.mean(0).unsqueeze(0)
 
         maxx = audio.abs().max()
         if maxx > 1:
@@ -793,14 +799,16 @@ class TTS:
         return spec, audio
 
     def _set_prompt_semantic(self, ref_wav_path: str):
+        from .audio_utils import ensure_minimum_duration
+
         zero_wav = np.zeros(
             int(self.configs.sampling_rate * 0.3),
             dtype=np.float16 if self.configs.is_half else np.float32,
         )
         with torch.no_grad():
             wav16k, sr = librosa.load(ref_wav_path, sr=16000)
-            # if wav16k.shape[0] > 160000 or wav16k.shape[0] < 48000:
-            #     raise OSError(i18n("参考音频在3~10秒范围外，请更换！"))
+            wav16k = ensure_minimum_duration(wav16k, sr=16000, min_duration=3.0)
+
             wav16k = torch.from_numpy(wav16k)
             zero_wav_torch = torch.from_numpy(zero_wav)
             wav16k = wav16k.to(self.configs.device)
