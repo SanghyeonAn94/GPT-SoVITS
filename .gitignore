@@ -191,3 +191,6 @@ cython_debug/
 .pypirc
 logs/*
 GPT_SoVITS/text/ja_userdic/*
+
+*.pth
+*.ckpt
