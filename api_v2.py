@@ -571,6 +571,9 @@ async def tts_post_endpoint(request: TTS_Request):
     print(f"  speed_factor: {request.speed_factor}")
     print(f"  streaming_mode: {request.streaming_mode}")
     print(f"  n_samples: {request.n_samples}  # GPU batch processing")
+    print(f"  GPT Model: {tts_config.t2s_weights_path}")
+    print(f"  SoVITS Model: {tts_config.vits_weights_path}")
+    print(f"  Version: {tts_config.version}")
     print(f"{'='*80}\n")
 
     # Release STT model before TTS inference to free GPU memory
