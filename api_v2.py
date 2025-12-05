@@ -271,6 +271,15 @@ class FineTuneGPTRequest(BaseModel):
     pretrained_s1: str = "GPT_SoVITS/pretrained_models/s1v3.ckpt"
 
 
+class VocalSeparationRequest(BaseModel):
+    """Request model for UVR5 vocal separation."""
+    audio_path: str  # Input audio file path
+    model_name: str = "HP5_only_main_vocal"  # UVR5 model name
+    output_format: str = "wav"  # Output format: wav, flac, mp3, m4a
+    agg: int = 10  # Aggressiveness (0-20)
+    output_dir: Optional[str] = None  # Custom output directory
+
+
 jobs: Dict[str, Dict[str, Any]] = {}
 
 
@@ -1301,6 +1310,207 @@ async def execute_fine_tune_gpt_direct(job_id: str, request: FineTuneGPTRequest)
         jobs[job_id]["error"] = str(e)
         jobs[job_id]["traceback"] = traceback.format_exc()
         jobs[job_id]["failed_at"] = datetime.now().isoformat()
+
+
+# ==================== UVR5 Vocal Separation ====================
+
+# UVR5 model cache
+_uvr5_model_cache = {}
+
+def get_uvr5_model(model_name: str, agg: int = 10):
+    """Get or create UVR5 model instance with caching."""
+    import torch
+    from tools.uvr5.vr import AudioPre, AudioPreDeEcho
+
+    cache_key = f"{model_name}_{agg}"
+    if cache_key in _uvr5_model_cache:
+        return _uvr5_model_cache[cache_key]
+
+    weight_uvr5_root = "tools/uvr5/uvr5_weights"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    is_deecho = "DeEcho" in model_name
+
+    if is_deecho:
+        model = AudioPreDeEcho(
+            agg=agg,
+            model_path=os.path.join(weight_uvr5_root, f"{model_name}.pth"),
+            device=device,
+            is_half=is_half
+        )
+    else:
+        model = AudioPre(
+            agg=agg,
+            model_path=os.path.join(weight_uvr5_root, f"{model_name}.pth"),
+            device=device,
+            is_half=is_half
+        )
+
+    _uvr5_model_cache[cache_key] = model
+    return model
+
+
+@APP.get("/uvr5/models")
+async def get_uvr5_models():
+    """Get list of available UVR5 models."""
+    weight_uvr5_root = "tools/uvr5/uvr5_weights"
+    models = []
+    descriptions = {
+        "HP2_all_vocals": "Keep all vocals without harmony removal",
+        "HP3_all_vocals": "Keep vocals with slight instrumental leak but better quality",
+        "HP5_only_main_vocal": "Extract only main vocal, removes harmony - RECOMMENDED",
+        "VR-DeEchoNormal": "Remove echo effect (normal intensity)",
+        "VR-DeEchoAggressive": "Remove echo effect (aggressive)",
+        "VR-DeEchoDeReverb": "Remove echo and reverb effects",
+    }
+
+    if os.path.exists(weight_uvr5_root):
+        for name in os.listdir(weight_uvr5_root):
+            if name.endswith(".pth") or name.endswith(".ckpt"):
+                model_name = name.replace(".pth", "").replace(".ckpt", "")
+                models.append(model_name)
+
+    return {
+        "models": models,
+        "descriptions": {k: v for k, v in descriptions.items() if k in models}
+    }
+
+
+@APP.post("/uvr5/separate")
+async def separate_vocals(request: VocalSeparationRequest):
+    """
+    Separate vocals from background music using UVR5.
+
+    This endpoint uses Ultimate Vocal Remover 5 to separate:
+    - Vocals (singing/speech)
+    - Instrumental/background music
+
+    Args:
+        request: VocalSeparationRequest with audio_path, model_name, output_format, agg
+
+    Returns:
+        JSON with vocal_path and instrumental_path
+    """
+    import torch
+    import ffmpeg as ffmpeg_probe
+
+    try:
+        if not os.path.exists(request.audio_path):
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"Audio file not found: {request.audio_path}"}
+            )
+
+        # Create output directories
+        output_base = request.output_dir or "output/uvr5_output"
+        vocal_dir = os.path.join(output_base, "vocals")
+        instrumental_dir = os.path.join(output_base, "instrumentals")
+        os.makedirs(vocal_dir, exist_ok=True)
+        os.makedirs(instrumental_dir, exist_ok=True)
+
+        # Get model
+        is_hp3 = "HP3" in request.model_name
+        pre_fun = get_uvr5_model(request.model_name, request.agg)
+
+        # Check if audio needs reformatting (must be 44100Hz stereo)
+        inp_path = request.audio_path
+        need_reformat = True
+        try:
+            info = ffmpeg_probe.probe(inp_path, cmd="ffprobe")
+            if (info["streams"][0]["channels"] == 2 and
+                info["streams"][0]["sample_rate"] == "44100"):
+                need_reformat = False
+        except Exception:
+            pass
+
+        # Reformat if needed
+        if need_reformat:
+            tmp_path = os.path.join(output_base, f"temp_{uuid.uuid4().hex[:8]}.wav")
+            os.system(f'ffmpeg -i "{inp_path}" -vn -acodec pcm_s16le -ac 2 -ar 44100 "{tmp_path}" -y')
+            if os.path.exists(tmp_path):
+                inp_path = tmp_path
+
+        # Run separation
+        pre_fun._path_audio_(
+            inp_path,
+            instrumental_dir,
+            vocal_dir,
+            request.output_format,
+            is_hp3
+        )
+
+        # Clean up temp file
+        if need_reformat and inp_path != request.audio_path and os.path.exists(inp_path):
+            os.remove(inp_path)
+
+        # Find output files
+        vocal_path = None
+        instrumental_path = None
+
+        for f in os.listdir(vocal_dir):
+            if f.startswith("vocal_") or f.startswith("instrument_"):
+                vocal_path = os.path.join(vocal_dir, f)
+                break
+
+        for f in os.listdir(instrumental_dir):
+            if f.startswith("instrument_") or not f.startswith("vocal_"):
+                instrumental_path = os.path.join(instrumental_dir, f)
+                break
+
+        # Clear GPU memory
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        return {
+            "success": True,
+            "vocal_path": vocal_path,
+            "instrumental_path": instrumental_path,
+            "model_used": request.model_name
+        }
+
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }
+        )
+
+
+@APP.post("/uvr5/separate-bytes")
+async def separate_vocals_bytes(request: VocalSeparationRequest):
+    """
+    Separate vocals and return audio bytes directly.
+    Useful for streaming responses without file I/O overhead.
+    """
+    result = await separate_vocals(request)
+
+    if isinstance(result, JSONResponse):
+        return result
+
+    if not result.get("success"):
+        return JSONResponse(status_code=500, content=result)
+
+    # Read files and return as base64
+    import base64
+
+    response_data = {
+        "success": True,
+        "model_used": result.get("model_used")
+    }
+
+    if result.get("vocal_path") and os.path.exists(result["vocal_path"]):
+        with open(result["vocal_path"], "rb") as f:
+            response_data["vocal_audio_base64"] = base64.b64encode(f.read()).decode()
+
+    if result.get("instrumental_path") and os.path.exists(result["instrumental_path"]):
+        with open(result["instrumental_path"], "rb") as f:
+            response_data["instrumental_audio_base64"] = base64.b64encode(f.read()).decode()
+
+    return response_data
 
 
 if __name__ == "__main__":
