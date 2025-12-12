@@ -12,6 +12,7 @@ from tqdm import tqdm
 from tools.asr.config import get_models
 from tools.asr.funasr_asr import only_asr
 from tools.asr.model_manager import get_stt_model_manager
+from tools.asr.language_detector import detect_language, read_lab_file
 from tools.my_utils import load_cudnn
 
 # fmt: off
@@ -82,6 +83,37 @@ def download_model(model_size: str):
     return model_path
 
 
+def find_matching_lab_file(audio_path: str) -> str | None:
+    """
+    Find a matching .lab file for the given audio file.
+
+    Matching rules:
+    - Same filename with .lab extension
+    - e.g., vo_ABLQ005_5_guainiao_01.wav -> vo_ABLQ005_5_guainiao_01.lab
+
+    Args:
+        audio_path: Path to audio file (.wav, .WAV, etc.)
+
+    Returns:
+        Path to matching .lab file if exists, None otherwise
+    """
+    # Get base path without extension
+    base_path = os.path.splitext(audio_path)[0]
+
+    # Check for .lab file (case-insensitive)
+    lab_candidates = [
+        f"{base_path}.lab",
+        f"{base_path}.LAB",
+        f"{base_path}.Lab",
+    ]
+
+    for lab_path in lab_candidates:
+        if os.path.exists(lab_path):
+            return lab_path
+
+    return None
+
+
 def execute_asr(input_folder, output_folder, model_path, language, precision):
     """
     Execute ASR (Speech-to-Text) using singleton model manager.
@@ -107,9 +139,21 @@ def execute_asr(input_folder, output_folder, model_path, language, precision):
         output = []
         output_file_name = os.path.basename(input_folder)
 
+        lab_used_count = 0
+        stt_used_count = 0
+
         for file_name in tqdm(input_file_names):
             try:
                 file_path = os.path.join(input_folder, file_name)
+                lab_path = find_matching_lab_file(file_path)
+                if lab_path:
+                    text = read_lab_file(lab_path)
+                    detected_lang = detect_language(text)
+                    output.append(f"{file_path}|{output_file_name}|{detected_lang}|{text}")
+                    lab_used_count += 1
+                    continue
+
+                # No .lab file - run Whisper STT
                 segments, info = model.transcribe(
                     audio=file_path,
                     beam_size=5,
@@ -127,9 +171,15 @@ def execute_asr(input_folder, output_folder, model_path, language, precision):
                     for segment in segments:
                         text += segment.text
                 output.append(f"{file_path}|{output_file_name}|{info.language.upper()}|{text}")
+                stt_used_count += 1
             except Exception as e:
                 print(e)
                 traceback.print_exc()
+
+        if lab_used_count > 0:
+            print(f"[LAB] {lab_used_count}개 파일에서 .lab 파일 사용 (STT 스킵)")
+        if stt_used_count > 0:
+            print(f"[STT] {stt_used_count}개 파일에서 Whisper STT 사용")
 
         output_folder = output_folder or "output/asr_opt"
         os.makedirs(output_folder, exist_ok=True)
