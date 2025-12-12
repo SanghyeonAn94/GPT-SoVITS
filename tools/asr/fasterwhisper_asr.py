@@ -15,6 +15,8 @@ from tools.asr.model_manager import get_stt_model_manager
 from tools.asr.language_detector import detect_language, read_lab_file
 from tools.my_utils import load_cudnn
 
+AUDIO_EXTENSIONS = {'.wav', '.mp3', '.flac', '.ogg', '.m4a', '.wma', '.aac'}
+
 # fmt: off
 language_code_list = [
     "af", "am", "ar", "as", "az", 
@@ -133,7 +135,11 @@ def execute_asr(input_folder, output_folder, model_path, language, precision):
     with manager.get_model(model_path, device, precision) as model:
         print(f"STT model acquired (device={device}, precision={precision})")
 
-        input_file_names = os.listdir(input_folder)
+        # Filter: only audio files
+        input_file_names = [
+            f for f in os.listdir(input_folder)
+            if os.path.splitext(f.lower())[1] in AUDIO_EXTENSIONS
+        ]
         input_file_names.sort()
 
         output = []
