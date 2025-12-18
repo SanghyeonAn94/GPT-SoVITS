@@ -1330,20 +1330,19 @@ def get_uvr5_model(model_name: str, agg: int = 10):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     is_deecho = "DeEcho" in model_name
-
     if is_deecho:
         model = AudioPreDeEcho(
             agg=agg,
             model_path=os.path.join(weight_uvr5_root, f"{model_name}.pth"),
             device=device,
-            is_half=is_half
+            is_half=False
         )
     else:
         model = AudioPre(
             agg=agg,
             model_path=os.path.join(weight_uvr5_root, f"{model_name}.pth"),
             device=device,
-            is_half=is_half
+            is_half=False
         )
 
     _uvr5_model_cache[cache_key] = model
