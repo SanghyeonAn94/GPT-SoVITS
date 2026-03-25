@@ -229,7 +229,7 @@ class STTRequest(BaseModel):
     output_folder: str
     model_path: str = "tools/asr/models/faster-whisper-large-v3"
     language: str = "auto"
-    precision: str = "float32"
+    precision: str = "float16"
 
 
 class DatasetFormattingRequest(BaseModel):
