@@ -71,6 +71,6 @@ ENV API_HOST=0.0.0.0
 ENV API_PORT=9881
 ENV CONFIG_PATH=GPT_SoVITS/configs/tts_infer.yaml
 
-# Health check - Just check if the API server is responding (any response is OK, even 4xx)
+# Health check - TCP check that server is listening
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -s -o /dev/null -w "%{http_code}" http://localhost:9881/tts | grep -E "^[2-4][0-9][0-9]$" > /dev/null || exit 1
+    CMD curl -sf http://localhost:9881/ > /dev/null 2>&1 || exit 1

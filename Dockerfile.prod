@@ -77,9 +77,9 @@ ENV CONFIG_PATH=GPT_SoVITS/configs/tts_infer.yaml
 ENV MODEL_DIR=/workspace/GPT-SoVITS
 ENV S3_MODEL_URI=s3://shiftup-enterprise-ai-service/tts/model_registry/GPT-SoVITS/
 
-# Health check
+# Health check - TCP check that server is listening
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
-    CMD curl -s -o /dev/null -w "%{http_code}" http://localhost:9881/tts | grep -E "^[2-4][0-9][0-9]$" > /dev/null || exit 1
+    CMD curl -sf http://localhost:9881/ > /dev/null 2>&1 || exit 1
 
 # Create entrypoint script for S3 model download
 RUN echo '#!/bin/bash\n\
