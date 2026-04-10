@@ -506,6 +506,12 @@ async def tts_handle(req: dict):
         return JSONResponse(status_code=400, content={"message": "tts failed", "Exception": str(e)})
 
 
+@APP.get("/health")
+async def health():
+    """Liveness/readiness probe."""
+    return {"status": "ok"}
+
+
 @APP.get("/control")
 async def control(command: str = None):
     if command is None:
