@@ -1,0 +1,74 @@
+FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    GPTSOVITS_BASE_DIR=/app/GPT-SoVITS \
+    GPTSOVITS_VOLUME_PATH=/runpod-volume/gpt-sovits \
+    GPTSOVITS_WORK_ROOT=/tmp/work \
+    GPTSOVITS_ASR_PATH=/runpod-volume/gpt-sovits/asr/faster-whisper-large-v3 \
+    GPTSOVITS_UVR5_WEIGHTS=/runpod-volume/gpt-sovits/uvr5_weights \
+    GPTSOVITS_MODEL_REGISTRY_S3=s3://shiftup-enterprise-ai-service/voice/model_registry/GPT-SoVITS \
+    AWS_DEFAULT_REGION=ap-northeast-2
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        software-properties-common ca-certificates && \
+    add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && apt-get install -y --no-install-recommends \
+        python3.11 python3.11-dev python3.11-distutils \
+        git wget curl ffmpeg libsndfile1 build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11 && \
+    update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 && \
+    update-alternatives --install /usr/bin/pip pip /usr/local/bin/pip3.11 1
+
+RUN pip install --no-cache-dir \
+        torch==2.7.1 torchaudio==2.7.1 \
+        --index-url https://download.pytorch.org/whl/cu128
+
+WORKDIR /app/GPT-SoVITS
+
+COPY requirements.txt /tmp/gpt-sovits-requirements.txt
+RUN pip install --no-cache-dir -r /tmp/gpt-sovits-requirements.txt
+
+RUN pip install --no-cache-dir \
+        "faster-whisper>=1.1.0" \
+        soundfile \
+        BS-RoFormer \
+        boto3 \
+        httpx \
+        runpod
+
+RUN python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng'); nltk.download('punkt')"
+
+COPY . /app/GPT-SoVITS
+
+RUN echo '#!/bin/bash\n\
+set -e\n\
+cd /app/GPT-SoVITS\n\
+\n\
+VOL=/runpod-volume/gpt-sovits\n\
+\n\
+if [ -d "$VOL/pretrained_models" ]; then\n\
+    rm -rf GPT_SoVITS/pretrained_models\n\
+    ln -sfn "$VOL/pretrained_models" GPT_SoVITS/pretrained_models\n\
+fi\n\
+\n\
+if [ -d "$VOL/asr" ]; then\n\
+    rm -rf tools/asr/models\n\
+    ln -sfn "$VOL/asr" tools/asr/models\n\
+fi\n\
+\n\
+if [ -d "$VOL/uvr5_weights" ]; then\n\
+    rm -rf tools/uvr5/uvr5_weights\n\
+    ln -sfn "$VOL/uvr5_weights" tools/uvr5/uvr5_weights\n\
+fi\n\
+\n\
+mkdir -p "$GPTSOVITS_WORK_ROOT"\n\
+\n\
+exec "$@"\n\
+' > /entrypoint.sh && chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["python", "-u", "-m", "app.handler"]
