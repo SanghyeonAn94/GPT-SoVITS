@@ -54,6 +54,7 @@ os.makedirs(WORK_ROOT, exist_ok=True)
 os.chdir(GPTSOVITS_BASE_DIR)
 sys.path.insert(0, GPTSOVITS_BASE_DIR)
 sys.path.insert(0, os.path.join(GPTSOVITS_BASE_DIR, "GPT_SoVITS"))
+sys.path.insert(0, os.path.join(GPTSOVITS_BASE_DIR, "tools/uvr5"))
 
 from app import s3_utils
 from GPT_SoVITS.TTS_infer_pack.TTS import TTS, TTS_Config
