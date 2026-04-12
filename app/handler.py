@@ -272,7 +272,7 @@ def _action_stt(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "GPTSOVITS_ASR_PATH",
                 os.path.join(GPTSOVITS_VOLUME_PATH, "asr/faster-whisper-large-v3"),
             ),
-            f"{PRETRAINED_S3_BASE}/base/whisper-large-v3/",
+            f"{PRETRAINED_S3_BASE}/base/faster-whisper-large-v3/",
         )
 
         output_file = execute_asr(

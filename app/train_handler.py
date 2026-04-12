@@ -121,7 +121,7 @@ def _run_stt(sliced_dir: str, stt_output_dir: str) -> str:
             "GPTSOVITS_ASR_PATH",
             os.path.join(GPTSOVITS_VOLUME_PATH, "asr/faster-whisper-large-v3"),
         ),
-        f"{PRETRAINED_S3_BASE}/base/whisper-large-v3/",
+        f"{PRETRAINED_S3_BASE}/base/faster-whisper-large-v3/",
     )
     output_file = execute_asr(sliced_dir, stt_output_dir, model_path, "auto", "float16")
     if not isinstance(output_file, str) or not os.path.exists(output_file):

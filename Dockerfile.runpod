@@ -61,7 +61,7 @@ if [ -d "$VOL/asr" ]; then\n\
     ln -sfn "$VOL/asr" tools/asr/models\n\
 elif [ ! -f "tools/asr/models/.s3_synced" ]; then\n\
     echo "Syncing ASR model from S3..."\n\
-    python -c "from app.s3_utils import ensure_local; ensure_local('"'"'tools/asr/models/faster-whisper-large-v3'"'"', '"'"'${S3_BASE}/base/whisper-large-v3/'"'"')"\n\
+    python -c "from app.s3_utils import ensure_local; ensure_local('"'"'tools/asr/models/faster-whisper-large-v3'"'"', '"'"'${S3_BASE}/base/faster-whisper-large-v3/'"'"')"\n\
 fi\n\
 \n\
 if [ -d "$VOL/uvr5_weights" ]; then\n\
