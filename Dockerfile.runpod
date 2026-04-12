@@ -49,6 +49,7 @@ set -e\n\
 cd /app/GPT-SoVITS\n\
 \n\
 VOL=/runpod-volume/gpt-sovits\n\
+S3_BASE=${GPTSOVITS_PRETRAINED_S3:-s3://shiftup-enterprise-ai-service/voice/model_registry}\n\
 \n\
 if [ -d "$VOL/pretrained_models" ]; then\n\
     rm -rf GPT_SoVITS/pretrained_models\n\
@@ -58,11 +59,17 @@ fi\n\
 if [ -d "$VOL/asr" ]; then\n\
     rm -rf tools/asr/models\n\
     ln -sfn "$VOL/asr" tools/asr/models\n\
+elif [ ! -f "tools/asr/models/.s3_synced" ]; then\n\
+    echo "Syncing ASR model from S3..."\n\
+    python -c "from app.s3_utils import ensure_local; ensure_local('"'"'tools/asr/models/faster-whisper-large-v3'"'"', '"'"'${S3_BASE}/base/whisper-large-v3/'"'"')"\n\
 fi\n\
 \n\
 if [ -d "$VOL/uvr5_weights" ]; then\n\
     rm -rf tools/uvr5/uvr5_weights\n\
     ln -sfn "$VOL/uvr5_weights" tools/uvr5/uvr5_weights\n\
+elif [ ! -f "tools/uvr5/uvr5_weights/.s3_synced" ]; then\n\
+    echo "Syncing UVR5 weights from S3..."\n\
+    python -c "from app.s3_utils import ensure_local; ensure_local('"'"'tools/uvr5/uvr5_weights'"'"', '"'"'${S3_BASE}/GPT-SoVITS/tools/uvr5/uvr5_weights/'"'"')"\n\
 fi\n\
 \n\
 mkdir -p "$GPTSOVITS_WORK_ROOT"\n\
