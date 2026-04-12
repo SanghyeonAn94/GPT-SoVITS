@@ -94,6 +94,30 @@ def download_prefix(prefix_uri: str, local_dir: str) -> int:
     return count
 
 
+def ensure_local(local_dir: str, s3_fallback_uri: str, marker: str = ".s3_synced") -> str:
+    """Ensure ``local_dir`` exists and has content; download from S3 if empty.
+
+    On a fresh network volume the directory will be missing.  This function
+    downloads the pretrained assets from ``s3_fallback_uri`` *once*, then
+    writes a small marker file so subsequent cold starts skip the download.
+
+    Returns ``local_dir`` unchanged (convenience for chaining).
+    """
+    marker_path = os.path.join(local_dir, marker)
+    if os.path.isdir(local_dir) and os.path.exists(marker_path):
+        return local_dir
+
+    logger.info(f"[s3] ensure_local: {local_dir} missing or empty, syncing from {s3_fallback_uri}")
+    count = download_prefix(s3_fallback_uri, local_dir)
+    if count > 0:
+        with open(marker_path, "w") as f:
+            f.write(f"synced {count} files from {s3_fallback_uri}\n")
+        logger.info(f"[s3] ensure_local: synced {count} files to {local_dir}")
+    else:
+        logger.warning(f"[s3] ensure_local: 0 files downloaded from {s3_fallback_uri}")
+    return local_dir
+
+
 def upload_file(local_path: str, uri: str, content_type: Optional[str] = None) -> str:
     """Upload a single file. Returns the same ``uri`` on success."""
     bucket, key = parse_uri(uri)

@@ -48,6 +48,10 @@ GPTSOVITS_BASE_DIR = os.environ.get("GPTSOVITS_BASE_DIR", "/app/GPT-SoVITS")
 GPTSOVITS_VOLUME_PATH = os.environ.get(
     "GPTSOVITS_VOLUME_PATH", "/runpod-volume/gpt-sovits"
 )
+PRETRAINED_S3_BASE = os.environ.get(
+    "GPTSOVITS_PRETRAINED_S3",
+    "s3://shiftup-enterprise-ai-service/voice/model_registry",
+)
 WORK_ROOT = os.environ.get("GPTSOVITS_WORK_ROOT", "/tmp/work")
 os.makedirs(WORK_ROOT, exist_ok=True)
 
@@ -263,9 +267,12 @@ def _action_stt(payload: Dict[str, Any]) -> Dict[str, Any]:
 
         from tools.asr.fasterwhisper_asr import execute_asr
 
-        model_path = os.environ.get(
-            "GPTSOVITS_ASR_PATH",
-            os.path.join(GPTSOVITS_VOLUME_PATH, "asr/faster-whisper-large-v3"),
+        model_path = s3_utils.ensure_local(
+            os.environ.get(
+                "GPTSOVITS_ASR_PATH",
+                os.path.join(GPTSOVITS_VOLUME_PATH, "asr/faster-whisper-large-v3"),
+            ),
+            f"{PRETRAINED_S3_BASE}/base/whisper-large-v3/",
         )
 
         output_file = execute_asr(
@@ -368,9 +375,12 @@ def _action_uvr5_separate(payload: Dict[str, Any]) -> Dict[str, Any]:
         agg = int(payload.get("agg", 10))
         output_format = payload.get("output_format", "wav")
 
-        weights_dir = os.environ.get(
-            "GPTSOVITS_UVR5_WEIGHTS",
-            os.path.join(GPTSOVITS_VOLUME_PATH, "uvr5_weights"),
+        weights_dir = s3_utils.ensure_local(
+            os.environ.get(
+                "GPTSOVITS_UVR5_WEIGHTS",
+                os.path.join(GPTSOVITS_VOLUME_PATH, "uvr5_weights"),
+            ),
+            f"{PRETRAINED_S3_BASE}/GPT-SoVITS/tools/uvr5/uvr5_weights/",
         )
         weight_file = os.path.join(weights_dir, f"{model_name}.pth")
         if not os.path.exists(weight_file):
@@ -427,9 +437,12 @@ def _action_uvr5_separate(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def _action_uvr5_models(_payload: Dict[str, Any]) -> Dict[str, Any]:
     """List UVR5 models shipped on the Network Volume (no audio I/O)."""
-    weights_dir = os.environ.get(
-        "GPTSOVITS_UVR5_WEIGHTS",
-        os.path.join(GPTSOVITS_VOLUME_PATH, "uvr5_weights"),
+    weights_dir = s3_utils.ensure_local(
+        os.environ.get(
+            "GPTSOVITS_UVR5_WEIGHTS",
+            os.path.join(GPTSOVITS_VOLUME_PATH, "uvr5_weights"),
+        ),
+        f"{PRETRAINED_S3_BASE}/GPT-SoVITS/tools/uvr5/uvr5_weights/",
     )
     if not os.path.isdir(weights_dir):
         return {"models": []}

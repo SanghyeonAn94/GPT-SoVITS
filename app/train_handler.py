@@ -48,6 +48,10 @@ GPTSOVITS_BASE_DIR = os.environ.get("GPTSOVITS_BASE_DIR", "/app/GPT-SoVITS")
 GPTSOVITS_VOLUME_PATH = os.environ.get(
     "GPTSOVITS_VOLUME_PATH", "/runpod-volume/gpt-sovits"
 )
+PRETRAINED_S3_BASE = os.environ.get(
+    "GPTSOVITS_PRETRAINED_S3",
+    "s3://shiftup-enterprise-ai-service/voice/model_registry",
+)
 WORK_ROOT = os.environ.get("GPTSOVITS_WORK_ROOT", "/tmp/work")
 MODEL_REGISTRY_S3 = os.environ.get(
     "GPTSOVITS_MODEL_REGISTRY_S3",
@@ -112,9 +116,12 @@ def _run_stt(sliced_dir: str, stt_output_dir: str) -> str:
     os.makedirs(stt_output_dir, exist_ok=True)
     from tools.asr.fasterwhisper_asr import execute_asr
 
-    model_path = os.environ.get(
-        "GPTSOVITS_ASR_PATH",
-        os.path.join(GPTSOVITS_VOLUME_PATH, "asr/faster-whisper-large-v3"),
+    model_path = s3_utils.ensure_local(
+        os.environ.get(
+            "GPTSOVITS_ASR_PATH",
+            os.path.join(GPTSOVITS_VOLUME_PATH, "asr/faster-whisper-large-v3"),
+        ),
+        f"{PRETRAINED_S3_BASE}/base/whisper-large-v3/",
     )
     output_file = execute_asr(sliced_dir, stt_output_dir, model_path, "auto", "float16")
     if not isinstance(output_file, str) or not os.path.exists(output_file):
