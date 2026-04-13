@@ -54,6 +54,9 @@ S3_BASE=${GPTSOVITS_PRETRAINED_S3:-s3://shiftup-enterprise-ai-service/voice/mode
 if [ -d "$VOL/pretrained_models" ]; then\n\
     rm -rf GPT_SoVITS/pretrained_models\n\
     ln -sfn "$VOL/pretrained_models" GPT_SoVITS/pretrained_models\n\
+elif [ ! -f "GPT_SoVITS/pretrained_models/.s3_synced" ]; then\n\
+    echo "Syncing pretrained_models from S3..."\n\
+    python -c "from app.s3_utils import ensure_local; ensure_local('"'"'GPT_SoVITS/pretrained_models'"'"', '"'"'${S3_BASE}/GPT-SoVITS/GPT_SoVITS/pretrained_models/'"'"')"\n\
 fi\n\
 \n\
 if [ -d "$VOL/asr" ]; then\n\
