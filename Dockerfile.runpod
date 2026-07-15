@@ -1,3 +1,25 @@
+# ── Stage 1: pull base model assets from S3 (baked into the image so a cold
+#    worker never has to fetch them at runtime; per-character checkpoints are
+#    unrelated and still fetched lazily at inference/training time) ─────────
+FROM amazon/aws-cli:2.15.0 AS asset-fetcher
+ARG AWS_ACCESS_KEY_ID
+ARG AWS_SECRET_ACCESS_KEY
+ARG AWS_SESSION_TOKEN
+ARG AWS_DEFAULT_REGION=ap-northeast-2
+ARG GPTSOVITS_PRETRAINED_S3=s3://shiftup-enterprise-ai-service/voice/model_registry
+ENV AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} \
+    AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} \
+    AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN} \
+    AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+
+RUN aws s3 sync "${GPTSOVITS_PRETRAINED_S3}/GPT-SoVITS/GPT_SoVITS/pretrained_models/" /assets/pretrained_models/ && \
+    echo "baked at build time" > /assets/pretrained_models/.s3_synced && \
+    aws s3 sync "${GPTSOVITS_PRETRAINED_S3}/base/faster-whisper-large-v3/" /assets/asr/faster-whisper-large-v3/ && \
+    echo "baked at build time" > /assets/asr/faster-whisper-large-v3/.s3_synced && \
+    aws s3 sync "${GPTSOVITS_PRETRAINED_S3}/GPT-SoVITS/tools/uvr5/uvr5_weights/" /assets/uvr5_weights/ && \
+    echo "baked at build time" > /assets/uvr5_weights/.s3_synced
+
+# ── Stage 2: runtime image ───────────────────────────────────────────────
 FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -44,6 +66,10 @@ RUN python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng'); nlt
 
 COPY . /app/GPT-SoVITS
 
+COPY --from=asset-fetcher /assets/pretrained_models GPT_SoVITS/pretrained_models
+COPY --from=asset-fetcher /assets/asr/faster-whisper-large-v3 tools/asr/models/faster-whisper-large-v3
+COPY --from=asset-fetcher /assets/uvr5_weights tools/uvr5/uvr5_weights
+
 RUN echo '#!/bin/bash\n\
 set -e\n\
 cd /app/GPT-SoVITS\n\
@@ -62,7 +88,7 @@ fi\n\
 if [ -d "$VOL/asr" ]; then\n\
     rm -rf tools/asr/models\n\
     ln -sfn "$VOL/asr" tools/asr/models\n\
-elif [ ! -f "tools/asr/models/.s3_synced" ]; then\n\
+elif [ ! -f "tools/asr/models/faster-whisper-large-v3/.s3_synced" ]; then\n\
     echo "Syncing ASR model from S3..."\n\
     python -c "from app.s3_utils import ensure_local; ensure_local('"'"'tools/asr/models/faster-whisper-large-v3'"'"', '"'"'${S3_BASE}/base/faster-whisper-large-v3/'"'"')"\n\
 fi\n\
