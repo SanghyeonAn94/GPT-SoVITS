@@ -70,7 +70,11 @@ fi
 cd "$(dirname "$0")/.."
 
 echo ">> Building $IMAGE with $CONTAINER_TOOL"
-"$CONTAINER_TOOL" build --progress=plain -f Dockerfile.runpod -t "$IMAGE" .
+"$CONTAINER_TOOL" build --progress=plain -f Dockerfile.runpod \
+  --build-arg AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
+  --build-arg AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
+  --build-arg AWS_SESSION_TOKEN="${AWS_SESSION_TOKEN:-}" \
+  -t "$IMAGE" .
 
 if [ "$PUSH" -eq 0 ]; then
   echo ">> Skipping push (--no-push). Local image: $IMAGE"
