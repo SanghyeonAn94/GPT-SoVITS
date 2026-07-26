@@ -42,10 +42,13 @@ RUN mkdir -p /workspace/GPT-SoVITS
 # Set working directory to GPT-SoVITS
 WORKDIR /workspace/GPT-SoVITS
 
-# Install PyTorch with CUDA 12.8 support first
+# Install PyTorch with CUDA 12.8 support first. 2.8.0 is the version shared by
+# every voice image (fish-speech, OmniVoice, CosyVoice, VoxCPM, natural-su-vc,
+# qwen3-tts) so the fleet runs one torch/CUDA ABI; it is also the first stable
+# series supporting sm_100 (Blackwell).
 RUN pip install --no-cache-dir \
-    torch==2.7.1 \
-    torchaudio==2.7.1 \
+    torch==2.8.0 \
+    torchaudio==2.8.0 \
     --index-url https://download.pytorch.org/whl/cu128
 
 # Copy GPT-SoVITS requirements.txt from current directory

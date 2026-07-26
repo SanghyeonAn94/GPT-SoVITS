@@ -45,14 +45,21 @@ RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11 && \
     update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 && \
     update-alternatives --install /usr/bin/pip pip /usr/local/bin/pip3.11 1
 
+# torch 2.8.0 is the single version every voice image installs, so the fleet
+# shares one torch/CUDA ABI (and 2.8 is the first stable series with sm_100).
 RUN pip install --no-cache-dir \
-        torch==2.7.1 torchaudio==2.7.1 \
+        torch==2.8.0 torchaudio==2.8.0 \
         --index-url https://download.pytorch.org/whl/cu128
 
 WORKDIR /app/GPT-SoVITS
 
+# torch/torchaudio repeated here so resolving these requirements cannot quietly
+# upgrade them through a transitive dependency (that is how CosyVoice's image
+# drifted from 2.8.0 to 2.11.0); a real conflict now fails the build instead.
 COPY requirements.txt /tmp/gpt-sovits-requirements.txt
-RUN pip install --no-cache-dir -r /tmp/gpt-sovits-requirements.txt
+RUN pip install --no-cache-dir -r /tmp/gpt-sovits-requirements.txt \
+        torch==2.8.0 torchaudio==2.8.0 \
+        --extra-index-url https://download.pytorch.org/whl/cu128
 
 RUN pip install --no-cache-dir \
         "faster-whisper>=1.1.0" \
