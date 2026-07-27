@@ -4,7 +4,6 @@
 import os
 import sys
 
-# to import modules from parent_dir
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(parent_dir)
 
@@ -24,7 +23,6 @@ def test_load_fused_kernels():
 def test_anti_alias_activation():
     data = torch.rand((10, 10, 200), device="cuda")
 
-    # Check activations.Snake cuda vs. torch
     fused_anti_alias_activation = activation1d.Activation1d(activation=Snake(10), fused=True).cuda()
     fused_activation_output = fused_anti_alias_activation(data)
 

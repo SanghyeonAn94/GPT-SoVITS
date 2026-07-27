@@ -54,18 +54,10 @@ def b_change_index(index, batch):
     output = []
     for i, _ in enumerate(datas):
         output.append(
-            # gr.Textbox(
-            #     label=f"Text {i+index}",
-            #     value=_[g_json_key_text]#text
-            # )
             {"__type__": "update", "label": f"Text {i + index}", "value": _[g_json_key_text]}
         )
     for _ in range(g_batch - len(datas)):
         output.append(
-            # gr.Textbox(
-            #     label=f"Text",
-            #     value=""
-            # )
             {"__type__": "update", "label": "Text", "value": ""}
         )
     for _ in datas:
@@ -123,7 +115,6 @@ def b_delete_audio(*checkbox_list):
         g_index = g_index if g_index >= 0 else 0
     if change:
         b_save_file()
-    # return gr.Slider(value=g_index, maximum=(g_max_json_index if g_max_json_index>=0 else 0)), *b_change_index(g_index, g_batch)
     return {
         "value": g_index,
         "__type__": "update",
@@ -171,7 +162,6 @@ def b_audio_split(audio_breakpoint, *checkbox_list):
             b_save_file()
 
     g_max_json_index = len(g_data_json) - 1
-    # return gr.Slider(value=g_index, maximum=g_max_json_index), *b_change_index(g_index, g_batch)
     return {"value": g_index, "maximum": g_max_json_index, "__type__": "update"}, *b_change_index(g_index, g_batch)
 
 
@@ -215,7 +205,6 @@ def b_merge_audio(interval_r, *checkbox_list):
 
     g_max_json_index = len(g_data_json) - 1
 
-    # return gr.Slider(value=g_index, maximum=g_max_json_index), *b_change_index(g_index, g_batch)
     return {"value": g_index, "maximum": g_max_json_index, "__type__": "update"}, *b_change_index(g_index, g_batch)
 
 
@@ -419,7 +408,6 @@ if __name__ == "__main__":
     demo.launch(
         server_name="0.0.0.0",
         inbrowser=True,
-        # quiet=True,
         share=eval(args.is_share),
         server_port=int(args.webui_port_subfix),
     )

@@ -1,10 +1,11 @@
+"""APNet-based bandwidth extension model with amplitude/phase ConvNeXt blocks and multi-resolution/multi-period discriminators."""
+
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
 from torch.nn.utils import weight_norm, spectral_norm
 
 
-# from utils import init_weights, get_padding
 def get_padding(kernel_size, dilation=1):
     return int((kernel_size * dilation - dilation) / 2)
 
@@ -22,17 +23,6 @@ LRELU_SLOPE = 0.1
 
 
 class ConvNeXtBlock(nn.Module):
-    """ConvNeXt Block adapted from https://github.com/facebookresearch/ConvNeXt to 1D audio signal.
-
-    Args:
-        dim (int): Number of input channels.
-        intermediate_dim (int): Dimensionality of the intermediate layer.
-        layer_scale_init_value (float, optional): Initial value for the layer scale. None means no scaling.
-            Defaults to None.
-        adanorm_num_embeddings (int, optional): Number of embeddings for AdaLayerNorm.
-            None means non-conditional LayerNorm. Defaults to None.
-    """
-
     def __init__(
         self,
         dim: int,
@@ -40,11 +30,11 @@ class ConvNeXtBlock(nn.Module):
         adanorm_num_embeddings=None,
     ):
         super().__init__()
-        self.dwconv = nn.Conv1d(dim, dim, kernel_size=7, padding=3, groups=dim)  # depthwise conv
+        self.dwconv = nn.Conv1d(dim, dim, kernel_size=7, padding=3, groups=dim)
         self.adanorm = adanorm_num_embeddings is not None
 
         self.norm = nn.LayerNorm(dim, eps=1e-6)
-        self.pwconv1 = nn.Linear(dim, dim * 3)  # pointwise/1x1 convs, implemented with linear layers
+        self.pwconv1 = nn.Linear(dim, dim * 3)
         self.act = nn.GELU()
         self.pwconv2 = nn.Linear(dim * 3, dim)
         self.gamma = (
@@ -56,7 +46,7 @@ class ConvNeXtBlock(nn.Module):
     def forward(self, x, cond_embedding_id=None):
         residual = x
         x = self.dwconv(x)
-        x = x.transpose(1, 2)  # (B, C, T) -> (B, T, C)
+        x = x.transpose(1, 2)
         if self.adanorm:
             assert cond_embedding_id is not None
             x = self.norm(x, cond_embedding_id)
@@ -67,7 +57,7 @@ class ConvNeXtBlock(nn.Module):
         x = self.pwconv2(x)
         if self.gamma is not None:
             x = self.gamma * x
-        x = x.transpose(1, 2)  # (B, T, C) -> (B, C, T)
+        x = x.transpose(1, 2)
 
         x = residual + x
         return x
@@ -163,9 +153,8 @@ class DiscriminatorP(torch.nn.Module):
     def forward(self, x):
         fmap = []
 
-        # 1d to 2d
         b, c, t = x.shape
-        if t % self.period != 0:  # pad first
+        if t % self.period != 0:
             n_pad = self.period - (t % self.period)
             x = F.pad(x, (0, n_pad), "reflect")
             t = t + n_pad
@@ -298,7 +287,7 @@ class DiscriminatorAR(nn.Module):
             n_fft=n_fft,
             hop_length=hop_length,
             win_length=win_length,
-            window=None,  # interestingly rectangular window kind of works here
+            window=None,
             center=True,
             return_complex=True,
         ).abs()
@@ -392,7 +381,7 @@ class DiscriminatorPR(nn.Module):
             n_fft=n_fft,
             hop_length=hop_length,
             win_length=win_length,
-            window=None,  # interestingly rectangular window kind of works here
+            window=None,
             center=True,
             return_complex=True,
         ).angle()

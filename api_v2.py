@@ -128,7 +128,6 @@ from pydantic import BaseModel
 import json
 import yaml
 
-# Import config variables (avoiding webui to prevent Gradio loading)
 from config import (
     exp_root,
     python_exec,
@@ -139,16 +138,13 @@ from config import (
     GPT_weight_version2root,
 )
 
-# print(sys.path)
 i18n = I18nAuto()
 cut_method_names = get_cut_method_names()
 
-# GPU helper functions (replicated from webui.py to avoid import)
 set_gpu_numbers = GPU_INDEX
 default_gpu_numbers = infer_device.index if hasattr(infer_device, 'index') else 0
 
 def fix_gpu_number(input_val):
-    """Fix GPU number to be within valid range."""
     try:
         if int(input_val) not in set_gpu_numbers:
             return default_gpu_numbers
@@ -157,7 +153,6 @@ def fix_gpu_number(input_val):
     return input_val
 
 def fix_gpu_numbers(inputs):
-    """Fix multiple GPU numbers separated by comma."""
     output = []
     try:
         for input_val in inputs.split(","):
@@ -172,7 +167,6 @@ parser.add_argument("-a", "--bind_addr", type=str, default="127.0.0.1", help="de
 parser.add_argument("-p", "--port", type=int, default="9880", help="default: 9880")
 args = parser.parse_args()
 config_path = args.tts_config
-# device = args.device
 port = args.port
 host = args.bind_addr
 argv = sys.argv
@@ -272,18 +266,16 @@ class FineTuneGPTRequest(BaseModel):
 
 
 class VocalSeparationRequest(BaseModel):
-    """Request model for UVR5 vocal separation."""
-    audio_path: str  # Input audio file path
-    model_name: str = "HP5_only_main_vocal"  # UVR5 model name
-    output_format: str = "wav"  # Output format: wav, flac, mp3, m4a
-    agg: int = 10  # Aggressiveness (0-20)
-    output_dir: Optional[str] = None  # Custom output directory
+    audio_path: str
+    model_name: str = "HP5_only_main_vocal"
+    output_format: str = "wav"
+    agg: int = 10
+    output_dir: Optional[str] = None
 
 
 jobs: Dict[str, Dict[str, Any]] = {}
 
 
-### modify from https://github.com/RVC-Boss/GPT-SoVITS/pull/894/files
 def pack_ogg(io_buffer: BytesIO, data: np.ndarray, rate: int):
     with sf.SoundFile(io_buffer, mode="w", samplerate=rate, channels=1, format="ogg") as audio_file:
         audio_file.write(data)
@@ -306,21 +298,21 @@ def pack_aac(io_buffer: BytesIO, data: np.ndarray, rate: int):
         [
             "ffmpeg",
             "-f",
-            "s16le",  # 输入16位有符号小端整数PCM
+            "s16le",
             "-ar",
-            str(rate),  # 设置采样率
+            str(rate),
             "-ac",
-            "1",  # 单声道
+            "1",
             "-i",
-            "pipe:0",  # 从管道读取输入
+            "pipe:0",
             "-c:a",
-            "aac",  # 音频编码器为AAC
+            "aac",
             "-b:a",
-            "192k",  # 比特率
-            "-vn",  # 不包含视频
+            "192k",
+            "-vn",
             "-f",
-            "adts",  # 输出AAC数据流格式
-            "pipe:1",  # 将输出写入管道
+            "adts",
+            "pipe:1",
         ],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -344,11 +336,7 @@ def pack_audio(io_buffer: BytesIO, data: np.ndarray, rate: int, media_type: str)
     return io_buffer
 
 
-# from https://huggingface.co/spaces/coqui/voice-chat-with-mistral/blob/main/app.py
 def wave_header_chunk(frame_input=b"", channels=1, sample_width=2, sample_rate=32000):
-    # This will create a wave header then append the frame input
-    # It should be first on a streaming wav file
-    # Other frames better should not have it (else you will hear some artifacts each chunk start)
     wav_buf = BytesIO()
     with wave.open(wav_buf, "wb") as vfout:
         vfout.setnchannels(channels)
@@ -409,39 +397,6 @@ def check_params(req: dict):
 
 
 async def tts_handle(req: dict):
-    """
-    Text to speech handler.
-
-    Args:
-        req (dict):
-            {
-                "text": "",                   # str.(required) text to be synthesized
-                "text_lang: "",               # str.(required) language of the text to be synthesized
-                "ref_audio_path": "",         # str.(required) reference audio path
-                "aux_ref_audio_paths": [],    # list.(optional) auxiliary reference audio paths for multi-speaker synthesis
-                "prompt_text": "",            # str.(optional) prompt text for the reference audio
-                "prompt_lang": "",            # str.(required) language of the prompt text for the reference audio
-                "top_k": 5,                   # int. top k sampling
-                "top_p": 1,                   # float. top p sampling
-                "temperature": 1,             # float. temperature for sampling
-                "text_split_method": "cut5",  # str. text split method, see text_segmentation_method.py for details.
-                "batch_size": 1,              # int. batch size for inference
-                "batch_threshold": 0.75,      # float. threshold for batch splitting.
-                "split_bucket: True,          # bool. whether to split the batch into multiple buckets.
-                "speed_factor":1.0,           # float. control the speed of the synthesized audio.
-                "fragment_interval":0.3,      # float. to control the interval of the audio fragment.
-                "seed": -1,                   # int. random seed for reproducibility.
-                "media_type": "wav",          # str. media type of the output audio, support "wav", "raw", "ogg", "aac".
-                "streaming_mode": False,      # bool. whether to return a streaming response.
-                "parallel_infer": True,       # bool.(optional) whether to use parallel inference.
-                "repetition_penalty": 1.35    # float.(optional) repetition penalty for T2S model.
-                "sample_steps": 32,           # int. number of sampling steps for VITS model V3.
-                "super_sampling": False,       # bool. whether to use super-sampling for audio when using VITS model V3.
-            }
-    returns:
-        StreamingResponse: audio stream response.
-    """
-
     streaming_mode = req.get("streaming_mode", False)
     return_fragment = req.get("return_fragment", False)
     media_type = req.get("media_type", "wav")
@@ -468,7 +423,6 @@ async def tts_handle(req: dict):
                         if_frist_chunk = False
                     yield pack_audio(BytesIO(), chunk, sr, media_type).getvalue()
 
-            # _media_type = f"audio/{media_type}" if not (streaming_mode and media_type in ["wav", "raw"]) else f"audio/x-{media_type}"
             return StreamingResponse(
                 streaming_generator(
                     tts_generator,
@@ -478,11 +432,9 @@ async def tts_handle(req: dict):
             )
 
         else:
-            # Collect all audio samples
             audio_samples = []
             for sr, audio_data in tts_generator:
                 audio_bytes = pack_audio(BytesIO(), audio_data, sr, media_type).getvalue()
-                # Convert to base64 for JSON response when n_samples > 1
                 if n_samples > 1:
                     import base64
                     audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
@@ -494,7 +446,6 @@ async def tts_handle(req: dict):
                 else:
                     audio_samples.append(audio_bytes)
 
-            # Return JSON response for multiple samples, binary for single sample
             if n_samples > 1:
                 return JSONResponse(content={
                     "n_samples": len(audio_samples),
@@ -508,7 +459,6 @@ async def tts_handle(req: dict):
 
 @APP.get("/health")
 async def health():
-    """Liveness/readiness probe."""
     return {"status": "ok"}
 
 
@@ -571,10 +521,9 @@ async def tts_get_endpoint(
 
 @APP.post("/tts")
 async def tts_post_endpoint(request: TTS_Request):
-    # DEBUG: Print received payload
     print(f"\n{'='*80}")
     print(f"[TTS DEBUG] Received request:")
-    print(f"  text: {request.text[:100] if len(request.text) > 100 else request.text}")  # Truncate long text
+    print(f"  text: {request.text[:100] if len(request.text) > 100 else request.text}")
     print(f"  text_lang: {request.text_lang}")
     print(f"  ref_audio_path: {request.ref_audio_path}")
     print(f"  prompt_text: {request.prompt_text[:100] if request.prompt_text and len(request.prompt_text) > 100 else request.prompt_text}")
@@ -585,13 +534,12 @@ async def tts_post_endpoint(request: TTS_Request):
     print(f"  text_split_method: {request.text_split_method}")
     print(f"  speed_factor: {request.speed_factor}")
     print(f"  streaming_mode: {request.streaming_mode}")
-    print(f"  n_samples: {request.n_samples}  # GPU batch processing")
+    print(f"  n_samples: {request.n_samples}")
     print(f"  GPT Model: {tts_config.t2s_weights_path}")
     print(f"  SoVITS Model: {tts_config.vits_weights_path}")
     print(f"  Version: {tts_config.version}")
     print(f"{'='*80}\n")
 
-    # Release STT model before TTS inference to free GPU memory
     stt_manager = get_stt_model_manager()
     if stt_manager.is_loaded():
         print("[TTS] Releasing STT model to free GPU memory for inference")
@@ -608,25 +556,6 @@ async def set_refer_aduio(refer_audio_path: str = None):
     except Exception as e:
         return JSONResponse(status_code=400, content={"message": "set refer audio failed", "Exception": str(e)})
     return JSONResponse(status_code=200, content={"message": "success"})
-
-
-# @APP.post("/set_refer_audio")
-# async def set_refer_aduio_post(audio_file: UploadFile = File(...)):
-#     try:
-#         # 检查文件类型，确保是音频文件
-#         if not audio_file.content_type.startswith("audio/"):
-#             return JSONResponse(status_code=400, content={"message": "file type is not supported"})
-
-#         os.makedirs("uploaded_audio", exist_ok=True)
-#         save_path = os.path.join("uploaded_audio", audio_file.filename)
-#         # 保存音频文件到服务器上的一个目录
-#         with open(save_path , "wb") as buffer:
-#             buffer.write(await audio_file.read())
-
-#         tts_pipeline.set_ref_audio(save_path)
-#     except Exception as e:
-#         return JSONResponse(status_code=400, content={"message": f"set refer audio failed", "Exception": str(e)})
-#     return JSONResponse(status_code=200, content={"message": "success"})
 
 
 @APP.get("/set_gpt_weights")
@@ -653,14 +582,6 @@ async def set_sovits_weights(weights_path: str = None):
 
 
 async def execute_job_async(job_id: str, operation_func, *args, **kwargs):
-    """
-    Execute a job asynchronously in background.
-
-    Args:
-        job_id: Unique job identifier
-        operation_func: Function to execute (from webui.py)
-        args, kwargs: Arguments for the operation function
-    """
     jobs[job_id]["status"] = "running"
     jobs[job_id]["started_at"] = datetime.now().isoformat()
 
@@ -684,23 +605,8 @@ async def execute_job_async(job_id: str, operation_func, *args, **kwargs):
 
 
 @APP.get("/jobs/{job_id}")
-@APP.get("/job-status/{job_id}")  # Alias for compatibility
+@APP.get("/job-status/{job_id}")
 async def get_job_status(job_id: str):
-    """
-    Get job status and result.
-
-    Returns:
-        {
-            "job_id": str,
-            "status": "queued" | "running" | "completed" | "failed",
-            "result": Any (if completed),
-            "error": str (if failed),
-            "created_at": str,
-            "started_at": str (if running/completed/failed),
-            "completed_at": str (if completed),
-            "failed_at": str (if failed)
-        }
-    """
     if job_id not in jobs:
         return JSONResponse(status_code=404, content={"message": "job not found"})
 
@@ -710,19 +616,13 @@ async def get_job_status(job_id: str):
 
 
 async def execute_speech_slicing_direct(job_id: str, request: SpeechSlicingRequest):
-    """
-    Execute speech slicing by directly calling slice_audio.py subprocess.
-    Replaces webui.open_slice() to avoid Gradio dependency.
-    """
     jobs[job_id]["status"] = "running"
     jobs[job_id]["started_at"] = datetime.now().isoformat()
 
     try:
-        # Prepare environment with PYTHONPATH
         env = os.environ.copy()
         env["PYTHONPATH"] = os.pathsep.join([now_dir, os.path.join(now_dir, "GPT_SoVITS")])
 
-        # Create processes for parallel slicing (n_parts)
         processes = []
         for i_part in range(request.n_parts):
             cmd = [
@@ -744,11 +644,9 @@ async def execute_speech_slicing_direct(job_id: str, request: SpeechSlicingReque
             p = subprocess.Popen(cmd, env=env, cwd=now_dir)
             processes.append(p)
 
-        # Wait for all processes to complete
         for p in processes:
             p.wait()
 
-        # Check if any process failed
         exit_codes = [p.returncode for p in processes]
         if any(code != 0 for code in exit_codes):
             raise Exception(f"Speech slicing failed with exit codes: {exit_codes}")
@@ -769,12 +667,6 @@ async def execute_speech_slicing_direct(job_id: str, request: SpeechSlicingReque
 
 @APP.post("/preprocessing/speech-slicing")
 async def speech_slicing_endpoint(request: SpeechSlicingRequest):
-    """
-    Start speech slicing job.
-
-    Directly executes tools/slice_audio.py (no webui dependency).
-    """
-    # DEBUG: Print received payload
     print(f"\n{'='*80}")
     print(f"[SPEECH SLICING DEBUG] Received request:")
     print(f"  inp: {request.inp}")
@@ -807,12 +699,6 @@ async def speech_slicing_endpoint(request: SpeechSlicingRequest):
 
 @APP.post("/preprocessing/stt")
 async def stt_endpoint(request: STTRequest):
-    """
-    Start STT (Speech-to-Text) job.
-
-    Wraps tools/asr/fasterwhisper_asr.execute_asr()
-    """
-    # DEBUG: Print received payload
     print(f"\n{'='*80}")
     print(f"[STT DEBUG] Received STT request:")
     print(request)
@@ -847,10 +733,6 @@ async def stt_endpoint(request: STTRequest):
 
 
 async def execute_dataset_formatting(job_id: str, request: DatasetFormattingRequest):
-    """
-    Execute dataset formatting sequentially: open1a -> open1b -> open1c
-    Directly executes subprocess (no webui dependency).
-    """
     jobs[job_id]["status"] = "running"
     jobs[job_id]["started_at"] = datetime.now().isoformat()
     jobs[job_id]["current_stage"] = "open1a"
@@ -859,11 +741,9 @@ async def execute_dataset_formatting(job_id: str, request: DatasetFormattingRequ
         opt_dir = f"{exp_root}/{request.exp_name}"
         os.makedirs(opt_dir, exist_ok=True)
 
-        # Parse GPU numbers
         gpu_names = request.gpu_numbers.split("-")
         all_parts = len(gpu_names)
 
-        # Stage 1a: Get text features
         print(f"[DATASET FORMATTING] Starting open1a...")
         for i_part in range(all_parts):
             env = os.environ.copy()
@@ -883,7 +763,6 @@ async def execute_dataset_formatting(job_id: str, request: DatasetFormattingRequ
             print(f"[DATASET FORMATTING] Executing 1a part {i_part}: {' '.join(cmd)}")
             await asyncio.to_thread(subprocess.run, cmd, env=env, cwd=now_dir, check=True)
 
-        # Merge text files from 1a stage
         opt = []
         path_text = f"{opt_dir}/2-name2text.txt"
         for i_part in range(all_parts):
@@ -896,7 +775,6 @@ async def execute_dataset_formatting(job_id: str, request: DatasetFormattingRequ
         with open(path_text, "w", encoding="utf8") as f:
             f.write("\n".join(opt) + "\n")
 
-        # Stage 1b: Get hubert features
         jobs[job_id]["current_stage"] = "open1b"
         print(f"[DATASET FORMATTING] Starting open1b...")
         sv_path = "GPT_SoVITS/pretrained_models/sv/pretrained_eres2netv2w24s4ep4.ckpt"
@@ -920,7 +798,6 @@ async def execute_dataset_formatting(job_id: str, request: DatasetFormattingRequ
             print(f"[DATASET FORMATTING] Executing 1b part {i_part}: {' '.join(cmd)}")
             await asyncio.to_thread(subprocess.run, cmd, env=env, cwd=now_dir, check=True)
 
-        # For v2Pro version, also run 2-get-sv.py
         if "Pro" in request.version:
             for i_part in range(all_parts):
                 env = os.environ.copy()
@@ -937,7 +814,6 @@ async def execute_dataset_formatting(job_id: str, request: DatasetFormattingRequ
                 print(f"[DATASET FORMATTING] Executing 2-get-sv part {i_part}: {' '.join(cmd)}")
                 await asyncio.to_thread(subprocess.run, cmd, env=env, cwd=now_dir, check=True)
 
-        # Stage 1c: Get semantic features
         jobs[job_id]["current_stage"] = "open1c"
         print(f"[DATASET FORMATTING] Starting open1c...")
         config_file = (
@@ -964,7 +840,6 @@ async def execute_dataset_formatting(job_id: str, request: DatasetFormattingRequ
             print(f"[DATASET FORMATTING] Executing 1c part {i_part}: {' '.join(cmd)}")
             await asyncio.to_thread(subprocess.run, cmd, env=env, cwd=now_dir, check=True)
 
-        # Merge semantic files (from open1c logic in webui.py)
         opt = ["item_name\tsemantic_audio"]
         path_semantic = f"{opt_dir}/6-name2semantic.tsv"
         for i_part in range(all_parts):
@@ -993,12 +868,6 @@ async def execute_dataset_formatting(job_id: str, request: DatasetFormattingRequ
 
 @APP.post("/training/format-dataset")
 async def format_dataset_endpoint(request: DatasetFormattingRequest):
-    """
-    Start dataset formatting job (open1a -> open1b -> open1c).
-
-    Wraps webui.open1a(), open1b(), open1c() sequentially.
-    """
-    # DEBUG: Print received payload
     print(f"\n{'='*80}")
     print(f"[DATASET FORMATTING DEBUG] Received request:")
     print(f"  version: {request.version}")
@@ -1011,7 +880,6 @@ async def format_dataset_endpoint(request: DatasetFormattingRequest):
     print(f"  pretrained_s2G_path: {request.pretrained_s2G_path}")
     print(f"{'='*80}\n")
 
-    # Release STT model before training to free GPU memory
     stt_manager = get_stt_model_manager()
     if stt_manager.is_loaded():
         print("[TRAINING] Releasing STT model to free GPU memory for dataset formatting")
@@ -1034,10 +902,6 @@ async def format_dataset_endpoint(request: DatasetFormattingRequest):
 
 
 async def execute_fine_tune_sovits_direct(job_id: str, request: FineTuneSoVITSRequest):
-    """
-    Execute SoVITS fine-tuning by directly calling s2_train.py subprocess.
-    Replaces webui.open1Ba() to avoid Gradio dependency.
-    """
     jobs[job_id]["status"] = "running"
     jobs[job_id]["started_at"] = datetime.now().isoformat()
 
@@ -1045,7 +909,6 @@ async def execute_fine_tune_sovits_direct(job_id: str, request: FineTuneSoVITSRe
         s2_dir = f"{exp_root}/{request.exp_name}"
         os.makedirs(f"{s2_dir}/logs_s2_{request.version}", exist_ok=True)
 
-        # Load config template
         config_file = (
             "GPT_SoVITS/configs/s2.json"
             if request.version not in {"v2Pro", "v2ProPlus"}
@@ -1054,7 +917,6 @@ async def execute_fine_tune_sovits_direct(job_id: str, request: FineTuneSoVITSRe
         with open(config_file) as f:
             data = json.loads(f.read())
 
-        # Update config with request parameters
         batch_size = request.batch_size
         if is_half == False:
             data["train"]["fp16_run"] = False
@@ -1077,17 +939,14 @@ async def execute_fine_tune_sovits_direct(job_id: str, request: FineTuneSoVITSRe
         data["name"] = request.exp_name
         data["version"] = request.version
 
-        # Write temporary config
         tmp_config_path = f"{now_dir}/TEMP/tmp_s2.json"
         os.makedirs(f"{now_dir}/TEMP", exist_ok=True)
         with open(tmp_config_path, "w") as f:
             f.write(json.dumps(data))
 
-        # Prepare environment with PYTHONPATH
         env = os.environ.copy()
         env["PYTHONPATH"] = os.pathsep.join([now_dir, os.path.join(now_dir, "GPT_SoVITS")])
 
-        # Determine training script based on version
         if request.version in ["v1", "v2", "v2Pro", "v2ProPlus"]:
             cmd = [python_exec, "GPT_SoVITS/s2_train.py", "--config", tmp_config_path]
         else:
@@ -1096,7 +955,6 @@ async def execute_fine_tune_sovits_direct(job_id: str, request: FineTuneSoVITSRe
         print(f"[SOVITS FINE-TUNING] Executing: {' '.join(cmd)}")
         result = await asyncio.to_thread(subprocess.run, cmd, env=env, cwd=now_dir, check=True)
 
-        # Find latest SoVITS checkpoint
         sovits_weights_dir = data["save_weight_dir"]
         latest_sovits_checkpoint = None
 
@@ -1135,12 +993,6 @@ async def execute_fine_tune_sovits_direct(job_id: str, request: FineTuneSoVITSRe
 
 @APP.post("/training/fine-tune-sovits")
 async def fine_tune_sovits_endpoint(request: FineTuneSoVITSRequest):
-    """
-    Start SoVITS fine-tuning job.
-
-    Directly executes s2_train.py (no webui dependency).
-    """
-    # DEBUG: Print received payload
     print(f"\n{'='*80}")
     print(f"[SOVITS FINE-TUNING DEBUG] Received request:")
     print(f"  version: {request.version}")
@@ -1158,7 +1010,6 @@ async def fine_tune_sovits_endpoint(request: FineTuneSoVITSRequest):
     print(f"  lora_rank: {request.lora_rank}")
     print(f"{'='*80}\n")
 
-    # Release STT model before training to free GPU memory
     stt_manager = get_stt_model_manager()
     if stt_manager.is_loaded():
         print("[TRAINING] Releasing STT model to free GPU memory for SoVITS fine-tuning")
@@ -1182,12 +1033,6 @@ async def fine_tune_sovits_endpoint(request: FineTuneSoVITSRequest):
 
 @APP.post("/training/fine-tune-gpt")
 async def fine_tune_gpt_endpoint(request: FineTuneGPTRequest):
-    """
-    Start GPT fine-tuning job.
-
-    Wraps webui.open1Bb()
-    """
-    # DEBUG: Print received payload
     print(f"\n{'='*80}")
     print(f"[GPT FINE-TUNING DEBUG] Received request:")
     print(f"  batch_size: {request.batch_size}")
@@ -1201,7 +1046,6 @@ async def fine_tune_gpt_endpoint(request: FineTuneGPTRequest):
     print(f"  pretrained_s1: {request.pretrained_s1}")
     print(f"{'='*80}\n")
 
-    # Release STT model before training to free GPU memory
     stt_manager = get_stt_model_manager()
     if stt_manager.is_loaded():
         print("[TRAINING] Releasing STT model to free GPU memory for GPT fine-tuning")
@@ -1224,10 +1068,6 @@ async def fine_tune_gpt_endpoint(request: FineTuneGPTRequest):
 
 
 async def execute_fine_tune_gpt_direct(job_id: str, request: FineTuneGPTRequest):
-    """
-    Execute GPT fine-tuning by directly calling s1_train.py subprocess.
-    Replaces webui.open1Bb() to avoid Gradio dependency.
-    """
     jobs[job_id]["status"] = "running"
     jobs[job_id]["started_at"] = datetime.now().isoformat()
 
@@ -1235,10 +1075,8 @@ async def execute_fine_tune_gpt_direct(job_id: str, request: FineTuneGPTRequest)
         s1_dir = f"{exp_root}/{request.exp_name}"
         os.makedirs(f"{s1_dir}/logs_s1", exist_ok=True)
 
-        # Determine version (from webui.py line 606)
         version = os.environ.get("version", "v4")
 
-        # Load config template
         config_path = (
             "GPT_SoVITS/configs/s1longer.yaml" if version == "v1"
             else "GPT_SoVITS/configs/s1longer-v2.yaml"
@@ -1246,7 +1084,6 @@ async def execute_fine_tune_gpt_direct(job_id: str, request: FineTuneGPTRequest)
         with open(config_path) as f:
             data = yaml.load(f.read(), Loader=yaml.FullLoader)
 
-        # Update config with request parameters
         batch_size = request.batch_size
         if is_half == False:
             data["train"]["precision"] = "32"
@@ -1265,24 +1102,20 @@ async def execute_fine_tune_gpt_direct(job_id: str, request: FineTuneGPTRequest)
         data["train_phoneme_path"] = f"{s1_dir}/2-name2text.txt"
         data["output_dir"] = f"{s1_dir}/logs_s1_{version}"
 
-        # Set environment variables for GPU and PYTHONPATH
         env = os.environ.copy()
         env["PYTHONPATH"] = os.pathsep.join([now_dir, os.path.join(now_dir, "GPT_SoVITS")])
         env["_CUDA_VISIBLE_DEVICES"] = fix_gpu_numbers(request.gpu_numbers.replace("-", ","))
         env["hz"] = "25hz"
 
-        # Write temporary config
         tmp_config_path = f"{now_dir}/TEMP/tmp_s1.yaml"
         os.makedirs(f"{now_dir}/TEMP", exist_ok=True)
         with open(tmp_config_path, "w") as f:
             f.write(yaml.dump(data, default_flow_style=False))
 
-        # Execute training
         cmd = [python_exec, "GPT_SoVITS/s1_train.py", "--config_file", tmp_config_path]
         print(f"[GPT FINE-TUNING] Executing: {' '.join(cmd)}")
         result = await asyncio.to_thread(subprocess.run, cmd, env=env, cwd=now_dir, check=True)
 
-        # Find latest GPT checkpoint
         gpt_weights_dir = data["train"]["half_weights_save_dir"]
         latest_gpt_checkpoint = None
 
@@ -1318,13 +1151,9 @@ async def execute_fine_tune_gpt_direct(job_id: str, request: FineTuneGPTRequest)
         jobs[job_id]["failed_at"] = datetime.now().isoformat()
 
 
-# ==================== UVR5 Vocal Separation ====================
-
-# UVR5 model cache
 _uvr5_model_cache = {}
 
 def get_uvr5_model(model_name: str, agg: int = 10):
-    """Get or create UVR5 model instance with caching."""
     import torch
     from tools.uvr5.vr import AudioPre, AudioPreDeEcho
 
@@ -1357,7 +1186,6 @@ def get_uvr5_model(model_name: str, agg: int = 10):
 
 @APP.get("/uvr5/models")
 async def get_uvr5_models():
-    """Get list of available UVR5 models."""
     weight_uvr5_root = "tools/uvr5/uvr5_weights"
     models = []
     descriptions = {
@@ -1383,19 +1211,6 @@ async def get_uvr5_models():
 
 @APP.post("/uvr5/separate")
 async def separate_vocals(request: VocalSeparationRequest):
-    """
-    Separate vocals from background music using UVR5.
-
-    This endpoint uses Ultimate Vocal Remover 5 to separate:
-    - Vocals (singing/speech)
-    - Instrumental/background music
-
-    Args:
-        request: VocalSeparationRequest with audio_path, model_name, output_format, agg
-
-    Returns:
-        JSON with vocal_path and instrumental_path
-    """
     import torch
     import ffmpeg as ffmpeg_probe
 
@@ -1406,18 +1221,15 @@ async def separate_vocals(request: VocalSeparationRequest):
                 content={"error": f"Audio file not found: {request.audio_path}"}
             )
 
-        # Create output directories
         output_base = request.output_dir or "output/uvr5_output"
         vocal_dir = os.path.join(output_base, "vocals")
         instrumental_dir = os.path.join(output_base, "instrumentals")
         os.makedirs(vocal_dir, exist_ok=True)
         os.makedirs(instrumental_dir, exist_ok=True)
 
-        # Get model
         is_hp3 = "HP3" in request.model_name
         pre_fun = get_uvr5_model(request.model_name, request.agg)
 
-        # Check if audio needs reformatting (must be 44100Hz stereo)
         inp_path = request.audio_path
         need_reformat = True
         try:
@@ -1428,14 +1240,12 @@ async def separate_vocals(request: VocalSeparationRequest):
         except Exception:
             pass
 
-        # Reformat if needed
         if need_reformat:
             tmp_path = os.path.join(output_base, f"temp_{uuid.uuid4().hex[:8]}.wav")
             os.system(f'ffmpeg -i "{inp_path}" -vn -acodec pcm_s16le -ac 2 -ar 44100 "{tmp_path}" -y')
             if os.path.exists(tmp_path):
                 inp_path = tmp_path
 
-        # Run separation
         pre_fun._path_audio_(
             inp_path,
             instrumental_dir,
@@ -1444,11 +1254,9 @@ async def separate_vocals(request: VocalSeparationRequest):
             is_hp3
         )
 
-        # Clean up temp file
         if need_reformat and inp_path != request.audio_path and os.path.exists(inp_path):
             os.remove(inp_path)
 
-        # Find output files
         vocal_path = None
         instrumental_path = None
 
@@ -1462,7 +1270,6 @@ async def separate_vocals(request: VocalSeparationRequest):
                 instrumental_path = os.path.join(instrumental_dir, f)
                 break
 
-        # Clear GPU memory
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -1487,10 +1294,6 @@ async def separate_vocals(request: VocalSeparationRequest):
 
 @APP.post("/uvr5/separate-bytes")
 async def separate_vocals_bytes(request: VocalSeparationRequest):
-    """
-    Separate vocals and return audio bytes directly.
-    Useful for streaming responses without file I/O overhead.
-    """
     result = await separate_vocals(request)
 
     if isinstance(result, JSONResponse):
@@ -1499,7 +1302,6 @@ async def separate_vocals_bytes(request: VocalSeparationRequest):
     if not result.get("success"):
         return JSONResponse(status_code=500, content=result)
 
-    # Read files and return as base64
     import base64
 
     response_data = {
@@ -1520,7 +1322,7 @@ async def separate_vocals_bytes(request: VocalSeparationRequest):
 
 if __name__ == "__main__":
     try:
-        if host == "None":  # 在调用时使用 -a None 参数，可以让api监听双栈
+        if host == "None":
             host = None
         uvicorn.run(app=APP, host=host, port=port, workers=1)
     except Exception:

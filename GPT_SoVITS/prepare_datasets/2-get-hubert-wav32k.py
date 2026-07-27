@@ -27,25 +27,13 @@ now_dir = os.getcwd()
 sys.path.append(now_dir)
 from tools.my_utils import load_audio, clean_path
 
-# from config import cnhubert_base_path
-# cnhubert.cnhubert_base_path=cnhubert_base_path
-# inp_text=sys.argv[1]
-# inp_wav_dir=sys.argv[2]
-# exp_name=sys.argv[3]
-# i_part=sys.argv[4]
-# all_parts=sys.argv[5]
-# os.environ["CUDA_VISIBLE_DEVICES"]=sys.argv[6]
-# cnhubert.cnhubert_base_path=sys.argv[7]
-# opt_dir="/data/docker/liujing04/gpt-vits/fine_tune_dataset/%s"%exp_name
-
 from time import time as ttime
 import shutil
 
 
-def my_save(fea, path):  #####fix issue: torch.save doesn't support chinese path
+def my_save(fea, path):
     dir = os.path.dirname(path)
     name = os.path.basename(path)
-    # tmp_path="%s/%s%s.pth"%(dir,ttime(),i_part)
     tmp_path = "%s%s.pth" % (ttime(), i_part)
     torch.save(fea, tmp_path)
     shutil.move(tmp_path, "%s/%s" % (dir, name))
@@ -61,12 +49,9 @@ maxx = 0.95
 alpha = 0.5
 if torch.cuda.is_available():
     device = "cuda:0"
-# elif torch.backends.mps.is_available():
-#     device = "mps"
 else:
     device = "cpu"
 model = cnhubert.get_model()
-# is_half=False
 if is_half == True:
     model = model.half().to(device)
 else:
@@ -86,13 +71,13 @@ def name2go(wav_name, wav_path):
         return
     tmp_audio32 = (tmp_audio / tmp_max * (maxx * alpha * 32768)) + ((1 - alpha) * 32768) * tmp_audio
     tmp_audio32b = (tmp_audio / tmp_max * (maxx * alpha * 1145.14)) + ((1 - alpha) * 1145.14) * tmp_audio
-    tmp_audio = librosa.resample(tmp_audio32b, orig_sr=32000, target_sr=16000)  # 不是重采样问题
+    tmp_audio = librosa.resample(tmp_audio32b, orig_sr=32000, target_sr=16000)
     tensor_wav16 = torch.from_numpy(tmp_audio)
     if is_half == True:
         tensor_wav16 = tensor_wav16.half().to(device)
     else:
         tensor_wav16 = tensor_wav16.to(device)
-    ssl = model.model(tensor_wav16.unsqueeze(0))["last_hidden_state"].transpose(1, 2).cpu()  # torch.Size([1, 768, 215])
+    ssl = model.model(tensor_wav16.unsqueeze(0))["last_hidden_state"].transpose(1, 2).cpu()
     if np.isnan(ssl.detach().numpy()).sum() != 0:
         nan_fails.append((wav_name, wav_path))
         print("nan filtered:%s" % wav_name)
@@ -110,7 +95,6 @@ with open(inp_text, "r", encoding="utf8") as f:
 
 for line in lines[int(i_part) :: int(all_parts)]:
     try:
-        # wav_name,text=line.split("\t")
         wav_name, spk_name, language, text = line.split("|")
         wav_name = clean_path(wav_name)
         if inp_wav_dir != "" and inp_wav_dir != None:

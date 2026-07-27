@@ -181,7 +181,6 @@ class ERes2NetV2(nn.Module):
         self.layer3 = self._make_layer(block_fuse, m_channels * 4, num_blocks[2], stride=2)
         self.layer4 = self._make_layer(block_fuse, m_channels * 8, num_blocks[3], stride=2)
 
-        # Downsampling module
         self.layer3_ds = nn.Conv2d(
             m_channels * 4 * self.expansion,
             m_channels * 8 * self.expansion,
@@ -191,7 +190,6 @@ class ERes2NetV2(nn.Module):
             bias=False,
         )
 
-        # Bottom-up fusion module
         self.fuse34 = AFF(channels=m_channels * 8 * self.expansion, r=4)
 
         self.n_stats = 1 if pooling_func == "TAP" or pooling_func == "TSDP" else 2
@@ -217,7 +215,7 @@ class ERes2NetV2(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        x = x.permute(0, 2, 1)  # (B,T,F) => (B,F,T)
+        x = x.permute(0, 2, 1)
         x = x.unsqueeze_(1)
         out = F.relu(self.bn1(self.conv1(x)))
         out1 = self.layer1(out)
@@ -238,7 +236,7 @@ class ERes2NetV2(nn.Module):
             return embed_a
 
     def forward3(self, x):
-        x = x.permute(0, 2, 1)  # (B,T,F) => (B,F,T)
+        x = x.permute(0, 2, 1)
         x = x.unsqueeze_(1)
         out = F.relu(self.bn1(self.conv1(x)))
         out1 = self.layer1(out)
@@ -247,18 +245,7 @@ class ERes2NetV2(nn.Module):
         out4 = self.layer4(out3)
         out3_ds = self.layer3_ds(out3)
         fuse_out34 = self.fuse34(out4, out3_ds)
-        # print(111111111,fuse_out34.shape)#111111111 torch.Size([16, 2048, 10, 72])
         return fuse_out34.flatten(start_dim=1, end_dim=2).mean(-1)
-        # stats = self.pool(fuse_out34)
-        #
-        # embed_a = self.seg_1(stats)
-        # if self.two_emb_layer:
-        #     out = F.relu(embed_a)
-        #     out = self.seg_bn_1(out)
-        #     embed_b = self.seg_2(out)
-        #     return embed_b
-        # else:
-        #     return embed_a
 
 
 if __name__ == "__main__":
@@ -268,5 +255,5 @@ if __name__ == "__main__":
     y = model(x)
     print(y.size())
     macs, num_params = profile(model, inputs=(x,))
-    print("Params: {} M".format(num_params / 1e6))  # 17.86 M
-    print("MACs: {} G".format(macs / 1e9))  # 12.69 G
+    print("Params: {} M".format(num_params / 1e6))
+    print("MACs: {} G".format(macs / 1e9))

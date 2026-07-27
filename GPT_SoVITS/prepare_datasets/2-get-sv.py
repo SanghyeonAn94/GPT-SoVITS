@@ -30,10 +30,9 @@ from ERes2NetV2 import ERes2NetV2
 import kaldi as Kaldi
 
 
-def my_save(fea, path):  #####fix issue: torch.save doesn't support chinese path
+def my_save(fea, path):
     dir = os.path.dirname(path)
     name = os.path.basename(path)
-    # tmp_path="%s/%s%s.pth"%(dir,ttime(),i_part)
     tmp_path = "%s%s.pth" % (ttime(), i_part)
     torch.save(fea, tmp_path)
     shutil.move(tmp_path, "%s/%s" % (dir, name))
@@ -49,8 +48,6 @@ maxx = 0.95
 alpha = 0.5
 if torch.cuda.is_available():
     device = "cuda:0"
-# elif torch.backends.mps.is_available():
-#     device = "mps"
 else:
     device = "cpu"
 
@@ -69,7 +66,7 @@ class SV:
             self.embedding_model = self.embedding_model.half().to(device)
         self.is_half = is_half
 
-    def compute_embedding3(self, wav):  # (1,x)#-1~1
+    def compute_embedding3(self, wav):
         with torch.no_grad():
             wav = self.res(wav)
             if self.is_half == True:
@@ -92,7 +89,7 @@ def name2go(wav_name, wav_path):
     wav32k, sr0 = torchaudio.load(wav_path)
     assert sr0 == 32000
     wav32k = wav32k.to(device)
-    emb = sv.compute_embedding3(wav32k).cpu()  # torch.Size([1, 20480])
+    emb = sv.compute_embedding3(wav32k).cpu()
     my_save(emb, sv_cn_path)
 
 

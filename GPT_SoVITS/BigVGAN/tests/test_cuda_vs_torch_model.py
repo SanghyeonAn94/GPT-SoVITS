@@ -4,7 +4,6 @@
 import os
 import sys
 
-# to import modules from parent_dir
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(parent_dir)
 
@@ -22,7 +21,6 @@ import argparse
 
 torch.backends.cudnn.benchmark = True
 
-# For easier debugging
 torch.set_printoptions(linewidth=200, threshold=10_000)
 
 
@@ -84,14 +82,11 @@ if __name__ == "__main__":
     generator_cuda_kernel.remove_weight_norm()
     generator_cuda_kernel.eval()
 
-    # define number of samples and length of mel frame to benchmark
     num_sample = 10
     num_mel_frame = 16384
 
-    # CUDA kernel correctness check
     diff = 0.0
     for i in tqdm(range(num_sample)):
-        # Random mel
         data = torch.rand((1, h.num_mels, num_mel_frame), device="cuda")
 
         with torch.inference_mode():
@@ -100,12 +95,11 @@ if __name__ == "__main__":
         with torch.inference_mode():
             audio_cuda_kernel = generator_cuda_kernel(data)
 
-        # Both outputs should be (almost) the same
         test_result = (audio_original - audio_cuda_kernel).abs()
         diff += test_result.mean(dim=-1).item()
 
     diff /= num_sample
-    if diff <= 2e-3:  # We can expect a small difference (~1e-3) which does not affect perceptual quality
+    if diff <= 2e-3:
         print(
             f"\n[Success] test CUDA fused vs. plain torch BigVGAN inference"
             f"\n > mean_difference={diff}"
@@ -122,14 +116,12 @@ if __name__ == "__main__":
 
     del data, audio_original, audio_cuda_kernel
 
-    # Variables for tracking total time and VRAM usage
     toc_total_original = 0
     toc_total_cuda_kernel = 0
     vram_used_original_total = 0
     vram_used_cuda_kernel_total = 0
     audio_length_total = 0
 
-    # Measure Original inference in isolation
     for i in tqdm(range(num_sample)):
         torch.cuda.reset_peak_memory_stats(device="cuda")
         data = torch.rand((1, h.num_mels, num_mel_frame), device="cuda")
@@ -146,7 +138,6 @@ if __name__ == "__main__":
         del data, audio_original
         torch.cuda.empty_cache()
 
-    # Measure CUDA kernel inference in isolation
     for i in tqdm(range(num_sample)):
         torch.cuda.reset_peak_memory_stats(device="cuda")
         data = torch.rand((1, h.num_mels, num_mel_frame), device="cuda")
@@ -165,14 +156,12 @@ if __name__ == "__main__":
         del data, audio_cuda_kernel
         torch.cuda.empty_cache()
 
-    # Calculate metrics
     audio_second = audio_length_total / h.sampling_rate
     khz_original = audio_length_total / toc_total_original / 1000
     khz_cuda_kernel = audio_length_total / toc_total_cuda_kernel / 1000
     vram_used_original_gb = vram_used_original_total / num_sample / (1024**3)
     vram_used_cuda_kernel_gb = vram_used_cuda_kernel_total / num_sample / (1024**3)
 
-    # Print results
     print(
         f"Original BigVGAN: took {toc_total_original:.2f} seconds to generate {audio_second:.2f} seconds of audio, {khz_original:.1f}kHz, {audio_second / toc_total_original:.1f} faster than realtime, VRAM used {vram_used_original_gb:.1f} GB"
     )
@@ -182,10 +171,8 @@ if __name__ == "__main__":
     print(f"speedup of CUDA kernel: {khz_cuda_kernel / khz_original}")
     print(f"VRAM saving of CUDA kernel: {vram_used_original_gb / vram_used_cuda_kernel_gb}")
 
-    # Use artificial sine waves for inference test
     audio_real, sr = generate_soundwave(duration=5.0, sr=h.sampling_rate)
     audio_real = torch.tensor(audio_real).to("cuda")
-    # Compute mel spectrogram from the ground truth audio
     x = get_mel(audio_real.unsqueeze(0), h)
 
     with torch.inference_mode():

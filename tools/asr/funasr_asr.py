@@ -1,15 +1,14 @@
 # -*- coding:utf-8 -*-
+"""FunASR-based ASR for Chinese and Cantonese, loading Paraformer/UniASR with cached models and writing GPT-SoVITS .list annotations."""
 
 import argparse
 import os
 import traceback
 
-# from funasr.utils import version_checker
-# version_checker.check_for_update = lambda: None
 from funasr import AutoModel
 from tqdm import tqdm
 
-funasr_models = {}  # 存储模型避免重复加载
+funasr_models = {}
 
 
 def only_asr(input_file, language):
@@ -47,7 +46,6 @@ def create_model(language="zh"):
         model_revision = "master"
         path_vad = path_punc = None
         vad_model_revision = punc_model_revision = None
-        ###友情提示：粤语带VAD识别可能会有少量shape不对报错的，但是不带VAD可以.不带vad只能分阶段单独加标点。不过标点模型对粤语效果真的不行…
     else:
         raise ValueError("FunASR 不支持该语言" + ": " + language)
 
@@ -108,7 +106,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "-p", "--precision", type=str, default="float16", choices=["float16", "float32"], help="fp16 or fp32"
-    )  # 还没接入
+    )
     cmd = parser.parse_args()
     execute_asr(
         input_folder=cmd.input_folder,

@@ -1,4 +1,8 @@
-# modified from https://github.com/lifeiteng/vall-e/blob/main/valle/modules/embedding.py
+"""Token and sinusoidal positional embeddings.
+
+modified from https://github.com/lifeiteng/vall-e/blob/main/valle/modules/embedding.py
+"""
+
 import math
 
 import torch
@@ -52,7 +56,6 @@ class SinePositionalEmbedding(nn.Module):
         self.extend_pe(torch.tensor(0.0).expand(1, 4000))
 
     def extend_pe(self, x):
-        """Reset the positional encodings."""
         if self.pe is not None:
             if self.pe.size(1) >= x.size(1):
                 if self.pe.dtype != x.dtype or self.pe.device != x.device:

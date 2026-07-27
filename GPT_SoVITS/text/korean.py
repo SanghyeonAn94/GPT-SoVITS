@@ -1,4 +1,7 @@
-# reference: https://github.com/ORI-Muchim/MB-iSTFT-VITS-Korean/blob/main/text/korean.py
+"""Korean g2p. Reference https://github.com/ORI-Muchim/MB-iSTFT-VITS-Korean/blob/main/text/korean.py
+
+Number-to-hangul routines reference https://github.com/Kyubyong/g2pK
+"""
 
 import re
 from jamo import h2j, j2hcj
@@ -8,7 +11,6 @@ from g2pk2 import G2p
 import importlib
 import os
 
-# 防止win下无法读取模型
 if os.name == "nt":
 
     class win_G2p(G2p):
@@ -58,26 +60,13 @@ if os.name == "nt":
 
 from text.symbols2 import symbols
 
-# This is a list of Korean classifiers preceded by pure Korean numerals.
 _korean_classifiers = (
     "군데 권 개 그루 닢 대 두 마리 모 모금 뭇 발 발짝 방 번 벌 보루 살 수 술 시 쌈 움큼 정 짝 채 척 첩 축 켤레 톨 통"
 )
 
-# List of (hangul, hangul divided) pairs:
 _hangul_divided = [
     (re.compile("%s" % x[0]), x[1])
     for x in [
-        # ('ㄳ', 'ㄱㅅ'),   # g2pk2, A Syllable-ending Rule
-        # ('ㄵ', 'ㄴㅈ'),
-        # ('ㄶ', 'ㄴㅎ'),
-        # ('ㄺ', 'ㄹㄱ'),
-        # ('ㄻ', 'ㄹㅁ'),
-        # ('ㄼ', 'ㄹㅂ'),
-        # ('ㄽ', 'ㄹㅅ'),
-        # ('ㄾ', 'ㄹㅌ'),
-        # ('ㄿ', 'ㄹㅍ'),
-        # ('ㅀ', 'ㄹㅎ'),
-        # ('ㅄ', 'ㅂㅅ'),
         ("ㅘ", "ㅗㅏ"),
         ("ㅙ", "ㅗㅐ"),
         ("ㅚ", "ㅗㅣ"),
@@ -94,7 +83,6 @@ _hangul_divided = [
     ]
 ]
 
-# List of (Latin alphabet, hangul) pairs:
 _latin_to_hangul = [
     (re.compile("%s" % x[0], re.IGNORECASE), x[1])
     for x in [
@@ -127,7 +115,6 @@ _latin_to_hangul = [
     ]
 ]
 
-# List of (ipa, lazy ipa) pairs:
 _ipa_to_lazy_ipa = [
     (re.compile("%s" % x[0], re.IGNORECASE), x[1])
     for x in [
@@ -181,7 +168,6 @@ def divide_hangul(text):
 
 
 def hangul_number(num, sino=True):
-    """Reference https://github.com/Kyubyong/g2pK"""
     num = re.sub(",", "", num)
 
     if num == "0":
@@ -260,7 +246,6 @@ def hangul_number(num, sino=True):
 
 
 def number_to_hangul(text):
-    """Reference https://github.com/Kyubyong/g2pK"""
     tokens = set(re.findall(r"(\d[\d,]*)([\uac00-\ud71f]+)", text))
     for token in tokens:
         num, classifier = token
@@ -269,7 +254,6 @@ def number_to_hangul(text):
         else:
             spelledout = hangul_number(num, sino=True)
         text = text.replace(f"{num}{classifier}", f"{spelledout}{classifier}")
-    # digit by digit for remaining digits
     digits = "0123456789"
     names = "영일이삼사오육칠팔구"
     for d, n in zip(digits, names):
@@ -327,7 +311,6 @@ def g2p(text):
     text = divide_hangul(text)
     text = fix_g2pk2_error(text)
     text = re.sub(r"([\u3131-\u3163])$", r"\1.", text)
-    # text = "".join([post_replace_ph(i) for i in text])
     text = [post_replace_ph(i) for i in text]
     return text
 

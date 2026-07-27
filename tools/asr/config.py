@@ -1,10 +1,9 @@
+"""ASR model registry: Faster Whisper local-model detection and the WebUI asr_dict mapping."""
+
 import os
 
 
 def check_fw_local_models():
-    """
-    启动时检查本地是否有 Faster Whisper 模型.
-    """
     model_size_list = [
         "medium",
         "medium.en",

@@ -1,3 +1,9 @@
+"""Mandarin Chinese grapheme-to-phoneme frontend.
+
+Text normalization follows
+https://github.com/PaddlePaddle/PaddleSpeech/tree/develop/paddlespeech/t2s/frontend/zh_normalization
+"""
+
 import os
 import re
 
@@ -96,7 +102,6 @@ def _g2p(segments):
     word2ph = []
     for seg in segments:
         pinyins = []
-        # Replace all English words in the sentence
         seg = re.sub("[a-zA-Z]+", "", seg)
         seg_cut = psg.lcut(seg)
         initials = []
@@ -110,14 +115,10 @@ def _g2p(segments):
             initials.append(sub_initials)
             finals.append(sub_finals)
 
-            # assert len(sub_initials) == len(sub_finals) == len(word)
         initials = sum(initials, [])
         finals = sum(finals, [])
-        #
         for c, v in zip(initials, finals):
             raw_pinyin = c + v
-            # NOTE: post process for pypinyin outputs
-            # we discriminate i, ii and iii
             if c == v:
                 assert c in punctuation
                 phone = [c]
@@ -130,7 +131,6 @@ def _g2p(segments):
                 assert tone in "12345"
 
                 if c:
-                    # 多音节
                     v_rep_map = {
                         "uei": "ui",
                         "iou": "iu",
@@ -139,7 +139,6 @@ def _g2p(segments):
                     if v_without_tone in v_rep_map.keys():
                         pinyin = c + v_rep_map[v_without_tone]
                 else:
-                    # 单音节
                     pinyin_rep_map = {
                         "ing": "ying",
                         "i": "yi",
@@ -169,14 +168,12 @@ def _g2p(segments):
 
 
 def text_normalize(text):
-    # https://github.com/PaddlePaddle/PaddleSpeech/tree/develop/paddlespeech/t2s/frontend/zh_normalization
     tx = TextNormalizer()
     sentences = tx.normalize(text)
     dest_text = ""
     for sentence in sentences:
         dest_text += replace_punctuation(sentence)
 
-    # 避免重复标点引起的参考泄露
     dest_text = replace_consecutive_punctuation(dest_text)
     return dest_text
 
@@ -187,8 +184,3 @@ if __name__ == "__main__":
     text = "你好"
     text = text_normalize(text)
     print(g2p(text))
-
-
-# # 示例用法
-# text = "这是一个示例文本：,你好！这是一个测试..."
-# print(g2p_paddle(text))  # 输出: 这是一个示例文本你好这是一个测试

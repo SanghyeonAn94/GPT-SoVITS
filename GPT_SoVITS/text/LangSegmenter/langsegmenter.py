@@ -1,11 +1,9 @@
 import logging
 import re
 
-# jieba静音
 import jieba
 jieba.setLogLevel(logging.CRITICAL)
 
-# 更改fast_langdetect大模型位置
 from pathlib import Path
 import fast_langdetect
 fast_langdetect.infer._default_detector = fast_langdetect.infer.LangDetector(fast_langdetect.infer.LangDetectConfig(cache_dir=Path(__file__).parent.parent.parent / "pretrained_models" / "fast_langdetect"))
@@ -20,18 +18,17 @@ def full_en(text):
 
 
 def full_cjk(text):
-    # 来自wiki
     cjk_ranges = [
-        (0x4E00, 0x9FFF),        # CJK Unified Ideographs
-        (0x3400, 0x4DB5),        # CJK Extension A
-        (0x20000, 0x2A6DD),      # CJK Extension B
-        (0x2A700, 0x2B73F),      # CJK Extension C
-        (0x2B740, 0x2B81F),      # CJK Extension D
-        (0x2B820, 0x2CEAF),      # CJK Extension E
-        (0x2CEB0, 0x2EBEF),      # CJK Extension F
-        (0x30000, 0x3134A),      # CJK Extension G
-        (0x31350, 0x323AF),      # CJK Extension H
-        (0x2EBF0, 0x2EE5D),      # CJK Extension H
+        (0x4E00, 0x9FFF),
+        (0x3400, 0x4DB5),
+        (0x20000, 0x2A6DD),
+        (0x2A700, 0x2B73F),
+        (0x2B740, 0x2B81F),
+        (0x2B820, 0x2CEAF),
+        (0x2CEB0, 0x2EBEF),
+        (0x30000, 0x3134A),
+        (0x31350, 0x323AF),
+        (0x2EBF0, 0x2EE5D),
     ]
 
     pattern = r'[0-9、-〜。！？.!?… /]+$'
@@ -75,13 +72,12 @@ def merge_lang(lang_list, item):
 
 
 class LangSegmenter():
-    # 默认过滤器, 基于gsv目前四种语言
     DEFAULT_LANG_MAP = {
         "zh": "zh",
-        "yue": "zh",  # 粤语
-        "wuu": "zh",  # 吴语
+        "yue": "zh",
+        "wuu": "zh",
         "zh-cn": "zh",
-        "zh-tw": "x", # 繁体设置为x
+        "zh-tw": "x",
         "ko": "ko",
         "ja": "ja",
         "en": "en",
@@ -107,8 +103,7 @@ class LangSegmenter():
                 lang_list = merge_lang(lang_list,dict_item)
                 continue
 
-            # 处理短英文被识别为其他语言的问题
-            if full_en(dict_item['text']):  
+            if full_en(dict_item['text']):
                 dict_item['lang'] = 'en'
                 lang_list = merge_lang(lang_list,dict_item)
                 continue
@@ -118,7 +113,6 @@ class LangSegmenter():
                 lang_list = merge_lang(lang_list,dict_item)
                 continue
             else:
-                # 处理非日语夹日文的问题(不包含CJK)
                 ja_list: list[dict] = []
                 if dict_item['lang'] != 'ja':
                     ja_list = split_jako('ja',dict_item)
@@ -126,7 +120,6 @@ class LangSegmenter():
                 if not ja_list:
                     ja_list.append(dict_item)
 
-                # 处理非韩语夹韩语的问题(不包含CJK)
                 ko_list: list[dict] = []
                 temp_list: list[dict] = []
                 for _, ko_item in enumerate(ja_list):
@@ -138,9 +131,7 @@ class LangSegmenter():
                     else:
                         temp_list.append(ko_item)
 
-                # 未存在非日韩文夹日韩文
                 if len(temp_list) == 1:
-                    # 未知语言检查是否为CJK
                     if dict_item['lang'] == 'x':
                         cjk_text = full_cjk(dict_item['text'])
                         if cjk_text:
@@ -153,9 +144,7 @@ class LangSegmenter():
                         lang_list = merge_lang(lang_list,dict_item)
                         continue
 
-                # 存在非日韩文夹日韩文
                 for _, temp_item in enumerate(temp_list):
-                    # 未知语言检查是否为CJK
                     if temp_item['lang'] == 'x':
                         cjk_text = full_cjk(temp_item['text'])
                         if cjk_text:
@@ -165,7 +154,6 @@ class LangSegmenter():
                     else:
                         lang_list = merge_lang(lang_list,temp_item)
 
-        # 有数字
         if have_num:
             temp_list = lang_list
             lang_list = []
@@ -196,7 +184,6 @@ class LangSegmenter():
                 lang_list = merge_lang(lang_list,temp_item)
 
 
-        # 筛X
         temp_list = lang_list
         lang_list = []
         for _, temp_item in enumerate(temp_list):

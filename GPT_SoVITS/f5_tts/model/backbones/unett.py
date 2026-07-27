@@ -29,17 +29,14 @@ from f5_tts.model.modules import (
 )
 
 
-# Text embedding
-
-
 class TextEmbedding(nn.Module):
     def __init__(self, text_num_embeds, text_dim, conv_layers=0, conv_mult=2):
         super().__init__()
-        self.text_embed = nn.Embedding(text_num_embeds + 1, text_dim)  # use 0 as filler token
+        self.text_embed = nn.Embedding(text_num_embeds + 1, text_dim)
 
         if conv_layers > 0:
             self.extra_modeling = True
-            self.precompute_max_pos = 4096  # ~44s of 24khz audio
+            self.precompute_max_pos = 4096
             self.register_buffer("freqs_cis", precompute_freqs_cis(text_dim, self.precompute_max_pos), persistent=False)
             self.text_blocks = nn.Sequential(
                 *[ConvNeXtV2Block(text_dim, text_dim * conv_mult) for _ in range(conv_layers)]
@@ -48,31 +45,25 @@ class TextEmbedding(nn.Module):
             self.extra_modeling = False
 
     def forward(self, text: int["b nt"], seq_len, drop_text=False):  # noqa: F722
-        text = text + 1  # use 0 as filler token. preprocess of batch pad -1, see list_str_to_idx()
-        text = text[:, :seq_len]  # curtail if character tokens are more than the mel spec tokens
+        text = text + 1
+        text = text[:, :seq_len]
         batch, text_len = text.shape[0], text.shape[1]
         text = F.pad(text, (0, seq_len - text_len), value=0)
 
-        if drop_text:  # cfg for text
+        if drop_text:
             text = torch.zeros_like(text)
 
-        text = self.text_embed(text)  # b n -> b n d
+        text = self.text_embed(text)
 
-        # possible extra modeling
         if self.extra_modeling:
-            # sinus pos emb
             batch_start = torch.zeros((batch,), dtype=torch.long)
             pos_idx = get_pos_embed_indices(batch_start, seq_len, max_pos=self.precompute_max_pos)
             text_pos_embed = self.freqs_cis[pos_idx]
             text = text + text_pos_embed
 
-            # convnextv2 blocks
             text = self.text_blocks(text)
 
         return text
-
-
-# noised input audio and context mixing embedding
 
 
 class InputEmbedding(nn.Module):
@@ -82,15 +73,12 @@ class InputEmbedding(nn.Module):
         self.conv_pos_embed = ConvPositionEmbedding(dim=out_dim)
 
     def forward(self, x: float["b n d"], cond: float["b n d"], text_embed: float["b n d"], drop_audio_cond=False):  # noqa: F722
-        if drop_audio_cond:  # cfg for cond audio
+        if drop_audio_cond:
             cond = torch.zeros_like(cond)
 
         x = self.proj(torch.cat((x, cond, text_embed), dim=-1))
         x = self.conv_pos_embed(x) + x
         return x
-
-
-# Flat UNet Transformer backbone
 
 
 class UNetT(nn.Module):
@@ -119,8 +107,6 @@ class UNetT(nn.Module):
         self.input_embed = InputEmbedding(mel_dim, text_dim, dim)
 
         self.rotary_embed = RotaryEmbedding(dim_head)
-
-        # transformer layers & skip connections
 
         self.dim = dim
         self.skip_connect_type = skip_connect_type
@@ -163,37 +149,33 @@ class UNetT(nn.Module):
 
     def forward(
         self,
-        x: float["b n d"],  # nosied input audio  # noqa: F722
-        cond: float["b n d"],  # masked cond audio  # noqa: F722
-        text: int["b nt"],  # text  # noqa: F722
-        time: float["b"] | float[""],  # time step  # noqa: F821 F722
-        drop_audio_cond,  # cfg for cond audio
-        drop_text,  # cfg for text
+        x: float["b n d"],  # noqa: F722
+        cond: float["b n d"],  # noqa: F722
+        text: int["b nt"],  # noqa: F722
+        time: float["b"] | float[""],  # noqa: F821 F722
+        drop_audio_cond,
+        drop_text,
         mask: bool["b n"] | None = None,  # noqa: F722
     ):
         batch, seq_len = x.shape[0], x.shape[1]
         if time.ndim == 0:
             time = time.repeat(batch)
 
-        # t: conditioning time, c: context (text + masked cond audio), x: noised input audio
         t = self.time_embed(time)
         text_embed = self.text_embed(text, seq_len, drop_text=drop_text)
         x = self.input_embed(x, cond, text_embed, drop_audio_cond=drop_audio_cond)
 
-        # postfix time t to input x, [b n d] -> [b n+1 d]
-        x = torch.cat([t.unsqueeze(1), x], dim=1)  # pack t to x
+        x = torch.cat([t.unsqueeze(1), x], dim=1)
         if mask is not None:
             mask = F.pad(mask, (1, 0), value=1)
 
         rope = self.rotary_embed.forward_from_seq_len(seq_len + 1)
 
-        # flat unet transformer
         skip_connect_type = self.skip_connect_type
         skips = []
         for idx, (maybe_skip_proj, attn_norm, attn, ff_norm, ff) in enumerate(self.layers):
             layer = idx + 1
 
-            # skip connection logic
             is_first_half = layer <= (self.depth // 2)
             is_later_half = not is_first_half
 
@@ -208,12 +190,11 @@ class UNetT(nn.Module):
                 elif skip_connect_type == "add":
                     x = x + skip
 
-            # attention and feedforward blocks
             x = attn(attn_norm(x), rope=rope, mask=mask) + x
             x = ff(ff_norm(x)) + x
 
         assert len(skips) == 0
 
-        x = self.norm_out(x)[:, 1:, :]  # unpack t from x
+        x = self.norm_out(x)[:, 1:, :]
 
         return self.proj_out(x)

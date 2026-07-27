@@ -115,10 +115,6 @@ class MultiScaleMelSpectrogramLoss(nn.Module):
         match_stride,
         window_type,
     ):
-        """
-        Mirrors AudioSignal.mel_spectrogram used by BigVGAN-v2 training from:
-        https://github.com/descriptinc/audiotools/blob/master/audiotools/core/audio_signal.py
-        """
         B, C, T = wav.shape
 
         if match_stride:
@@ -145,9 +141,6 @@ class MultiScaleMelSpectrogramLoss(nn.Module):
         _, nf, nt = stft.shape
         stft = stft.reshape(B, C, nf, nt)
         if match_stride:
-            """
-            Drop first two and last two frames, which are added, because of padding. Now num_frames * hop_length = num_samples.
-            """
             stft = stft[..., 2:-2]
         magnitude = torch.abs(stft)
 
@@ -160,22 +153,6 @@ class MultiScaleMelSpectrogramLoss(nn.Module):
         return mel_spectrogram
 
     def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        """Computes mel loss between an estimate and a reference
-        signal.
-
-        Parameters
-        ----------
-        x : torch.Tensor
-            Estimate signal
-        y : torch.Tensor
-            Reference signal
-
-        Returns
-        -------
-        torch.Tensor
-            Mel loss.
-        """
-
         loss = 0.0
         for n_mels, fmin, fmax, s in zip(self.n_mels, self.mel_fmin, self.mel_fmax, self.stft_params):
             kwargs = {
@@ -199,14 +176,13 @@ class MultiScaleMelSpectrogramLoss(nn.Module):
         return loss
 
 
-# Loss functions
 def feature_loss(fmap_r: List[List[torch.Tensor]], fmap_g: List[List[torch.Tensor]]) -> torch.Tensor:
     loss = 0
     for dr, dg in zip(fmap_r, fmap_g):
         for rl, gl in zip(dr, dg):
             loss += torch.mean(torch.abs(rl - gl))
 
-    return loss * 2  # This equates to lambda=2.0 for the feature matching loss
+    return loss * 2
 
 
 def discriminator_loss(

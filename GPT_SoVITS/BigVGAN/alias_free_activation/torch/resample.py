@@ -1,5 +1,4 @@
-# Adapted from https://github.com/junjun3518/alias-free-torch under the Apache License 2.0
-#   LICENSE is in incl_licenses directory.
+"""Adapted from https://github.com/junjun3518/alias-free-torch under the Apache License 2.0 (LICENSE is in incl_licenses directory)."""
 
 import torch.nn as nn
 from torch.nn import functional as F
@@ -19,7 +18,6 @@ class UpSample1d(nn.Module):
         filter = kaiser_sinc_filter1d(cutoff=0.5 / ratio, half_width=0.6 / ratio, kernel_size=self.kernel_size)
         self.register_buffer("filter", filter)
 
-    # x: [B, C, T]
     def forward(self, x):
         _, C, _ = x.shape
 

@@ -21,23 +21,13 @@ from text.cleaner import clean_text
 from transformers import AutoModelForMaskedLM, AutoTokenizer
 from tools.my_utils import clean_path
 
-# inp_text=sys.argv[1]
-# inp_wav_dir=sys.argv[2]
-# exp_name=sys.argv[3]
-# i_part=sys.argv[4]
-# all_parts=sys.argv[5]
-# os.environ["CUDA_VISIBLE_DEVICES"]=sys.argv[6]#i_gpu
-# opt_dir="/data/docker/liujing04/gpt-vits/fine_tune_dataset/%s"%exp_name
-# bert_pretrained_dir="/data/docker/liujing04/bert-vits2/Bert-VITS2-master20231106/bert/chinese-roberta-wwm-ext-large"
-
 from time import time as ttime
 import shutil
 
 
-def my_save(fea, path):  #####fix issue: torch.save doesn't support chinese path
+def my_save(fea, path):
     dir = os.path.dirname(path)
     name = os.path.basename(path)
-    # tmp_path="%s/%s%s.pth"%(dir,ttime(),i_part)
     tmp_path = "%s%s.pth" % (ttime(), i_part)
     torch.save(fea, tmp_path)
     shutil.move(tmp_path, "%s/%s" % (dir, name))
@@ -50,8 +40,6 @@ if os.path.exists(txt_path) == False:
     os.makedirs(bert_dir, exist_ok=True)
     if torch.cuda.is_available():
         device = "cuda:0"
-    # elif torch.backends.mps.is_available():
-    #     device = "mps"
     else:
         device = "cpu"
     if os.path.exists(bert_pretrained_dir):
@@ -94,10 +82,8 @@ if os.path.exists(txt_path) == False:
                 if os.path.exists(path_bert) == False and lan == "zh":
                     bert_feature = get_bert_feature(norm_text, word2ph)
                     assert bert_feature.shape[-1] == len(phones)
-                    # torch.save(bert_feature, path_bert)
                     my_save(bert_feature, path_bert)
                 phones = " ".join(phones)
-                # res.append([name,phones])
                 res.append([name, phones, word2ph, norm_text])
             except:
                 print(name, text, traceback.format_exc())
@@ -127,7 +113,6 @@ if os.path.exists(txt_path) == False:
     for line in lines[int(i_part) :: int(all_parts)]:
         try:
             wav_name, spk_name, language, text = line.split("|")
-            # todo.append([name,text,"zh"])
             if language in language_v1_to_language_v2.keys():
                 todo.append([wav_name, text, language_v1_to_language_v2.get(language, language)])
             else:

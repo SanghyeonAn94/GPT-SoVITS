@@ -20,21 +20,18 @@ from .num import verbalize_digit
 
 
 def _time_num2str(num_string: str) -> str:
-    """A special case for verbalizing number in time."""
     result = num2str(num_string.lstrip("0"))
     if num_string.startswith("0"):
         result = DIGITS["0"] + result
     return result
 
 
-# 时刻表达式
 RE_TIME = re.compile(
     r"([0-1]?[0-9]|2[0-3])"
     r":([0-5][0-9])"
     r"(:([0-5][0-9]))?"
 )
 
-# 时间范围，如8:30-12:30
 RE_TIME_RANGE = re.compile(
     r"([0-1]?[0-9]|2[0-3])"
     r":([0-5][0-9])"
@@ -47,12 +44,6 @@ RE_TIME_RANGE = re.compile(
 
 
 def replace_time(match) -> str:
-    """
-    Args:
-        match (re.Match)
-    Returns:
-        str
-    """
 
     is_range = len(match.groups()) > 5
 
@@ -96,12 +87,6 @@ RE_DATE = re.compile(
 
 
 def replace_date(match) -> str:
-    """
-    Args:
-        match (re.Match)
-    Returns:
-        str
-    """
     year = match.group(1)
     month = match.group(3)
     day = match.group(5)
@@ -115,17 +100,10 @@ def replace_date(match) -> str:
     return result
 
 
-# 用 / 或者 - 分隔的 YY/MM/DD 或者 YY-MM-DD 日期
 RE_DATE2 = re.compile(r"(\d{4})([- /.])(0[1-9]|1[012])\2(0[1-9]|[12][0-9]|3[01])")
 
 
 def replace_date2(match) -> str:
-    """
-    Args:
-        match (re.Match)
-    Returns:
-        str
-    """
     year = match.group(1)
     month = match.group(3)
     day = match.group(4)

@@ -146,8 +146,6 @@ class EuclideanCodebook(nn.Module):
         self.embed_avg.data.copy_(embed.clone())
         self.cluster_size.data.copy_(cluster_size)
         self.inited.data.copy_(torch.Tensor([True]))
-        # Make sure all buffers across workers are in sync after initialization
-        # broadcast_tensors(self.buffers())
 
     def replace_(self, samples, mask):
         modified_codebook = torch.where(mask[..., None], sample_vectors(samples, self.codebook_size), self.embed)
@@ -163,7 +161,6 @@ class EuclideanCodebook(nn.Module):
 
         batch_samples = rearrange(batch_samples, "... d -> (...) d")
         self.replace_(batch_samples, mask=expired_codes)
-        # broadcast_tensors(self.buffers())
 
     def preprocess(self, x):
         x = rearrange(x, "... d -> (...) d")
@@ -184,11 +181,8 @@ class EuclideanCodebook(nn.Module):
 
     def encode(self, x):
         shape = x.shape
-        # pre-process
         x = self.preprocess(x)
-        # quantize
         embed_ind = self.quantize(x)
-        # post-process
         embed_ind = self.postprocess_emb(embed_ind, shape)
         return embed_ind
 
@@ -208,8 +202,6 @@ class EuclideanCodebook(nn.Module):
         quantize = self.dequantize(embed_ind)
 
         if self.training:
-            # We do the expiry of code at that point as buffers are in sync
-            # and all the workers will take the same decision.
             self.expire_codes_(x)
             ema_inplace(self.cluster_size, embed_onehot.sum(0), self.decay)
             embed_sum = x.t() @ embed_onehot

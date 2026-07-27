@@ -33,7 +33,7 @@ class TextEmbedding(nn.Module):
         super().__init__()
         if conv_layers > 0:
             self.extra_modeling = True
-            self.precompute_max_pos = 4096  # ~44s of 24khz audio
+            self.precompute_max_pos = 4096
             self.register_buffer("freqs_cis", precompute_freqs_cis(text_dim, self.precompute_max_pos), persistent=False)
             self.text_blocks = nn.Sequential(
                 *[ConvNeXtV2Block(text_dim, text_dim * conv_mult) for _ in range(conv_layers)]
@@ -44,27 +44,19 @@ class TextEmbedding(nn.Module):
     def forward(self, text: int["b nt"], seq_len, drop_text=False):  # noqa: F722
         batch, text_len = text.shape[0], text.shape[1]
 
-        if drop_text:  # cfg for text
+        if drop_text:
             text = torch.zeros_like(text)
 
-        # possible extra modeling
         if self.extra_modeling:
-            # sinus pos emb
             batch_start = torch.zeros((batch,), dtype=torch.long)
             pos_idx = get_pos_embed_indices(batch_start, seq_len, max_pos=self.precompute_max_pos)
             text_pos_embed = self.freqs_cis[pos_idx]
 
-            # print(23333333,text.shape,text_pos_embed.shape)#torch.Size([7, 465, 256]) torch.Size([7, 465, 256])
-
             text = text + text_pos_embed
 
-            # convnextv2 blocks
             text = self.text_blocks(text)
 
         return text
-
-
-# noised input audio and context mixing embedding
 
 
 class InputEmbedding(nn.Module):
@@ -74,15 +66,12 @@ class InputEmbedding(nn.Module):
         self.conv_pos_embed = ConvPositionEmbedding(dim=out_dim)
 
     def forward(self, x: float["b n d"], cond: float["b n d"], text_embed: float["b n d"], drop_audio_cond=False):  # noqa: F722
-        if drop_audio_cond:  # cfg for cond audio
+        if drop_audio_cond:
             cond = torch.zeros_like(cond)
 
         x = self.proj(torch.cat((x, cond, text_embed), dim=-1))
         x = self.conv_pos_embed(x) + x
         return x
-
-
-# Transformer backbone using DiT blocks
 
 
 class DiT(nn.Module):
@@ -119,33 +108,30 @@ class DiT(nn.Module):
         )
         self.long_skip_connection = nn.Linear(dim * 2, dim, bias=False) if long_skip_connection else None
 
-        self.norm_out = AdaLayerNormZero_Final(dim)  # final modulation
+        self.norm_out = AdaLayerNormZero_Final(dim)
         self.proj_out = nn.Linear(dim, mel_dim)
 
     def ckpt_wrapper(self, module):
-        # https://github.com/chuanyangjin/fast-DiT/blob/main/models.py
         def ckpt_forward(*inputs):
             outputs = module(*inputs)
             return outputs
 
         return ckpt_forward
 
-    def forward(  # x, prompt_x, x_lens, t, style,cond
-        self,  # d is channel,n is T
-        x0: float["b n d"],  # nosied input audio  # noqa: F722
-        cond0: float["b n d"],  # masked cond audio  # noqa: F722
+    def forward(
+        self,
+        x0: float["b n d"],  # noqa: F722
+        cond0: float["b n d"],  # noqa: F722
         x_lens,
-        time: float["b"] | float[""],  # time step  # noqa: F821 F722
+        time: float["b"] | float[""],  # noqa: F821 F722
         dt_base_bootstrap,
-        text0,  # : int["b nt"]  # noqa: F722#####condition feature
-        use_grad_ckpt=False,  # bool
-        ###no-use
-        drop_audio_cond=False,  # cfg for cond audio
-        drop_text=False,  # cfg for text
-        # mask: bool["b n"] | None = None,  # noqa: F722
-        infer=False,  # bool
-        text_cache=None,  # torch tensor as text_embed
-        dt_cache=None,  # torch tensor as dt
+        text0,  # noqa: F722
+        use_grad_ckpt=False,
+        drop_audio_cond=False,
+        drop_text=False,
+        infer=False,
+        text_cache=None,
+        dt_cache=None,
     ):
         x = x0.transpose(2, 1)
         cond = cond0.transpose(2, 1)
@@ -156,7 +142,6 @@ class DiT(nn.Module):
         if time.ndim == 0:
             time = time.repeat(batch)
 
-        # t: conditioning time, c: context (text + masked cond audio), x: noised input audio
         t = self.time_embed(time)
         if infer and dt_cache is not None:
             dt = dt_cache
@@ -167,7 +152,7 @@ class DiT(nn.Module):
         if infer and text_cache is not None:
             text_embed = text_cache
         else:
-            text_embed = self.text_embed(text, seq_len, drop_text=drop_text)  ###need to change
+            text_embed = self.text_embed(text, seq_len, drop_text=drop_text)
 
         x = self.input_embed(x, cond, text_embed, drop_audio_cond=drop_audio_cond)
 

@@ -1,9 +1,17 @@
-# Copyright (c) 2024 NVIDIA CORPORATION.
-#   Licensed under the MIT license.
+"""BigVGAN discriminators.
 
-# Adapted from https://github.com/jik876/hifi-gan under the MIT license.
-#   LICENSE is in incl_licenses directory.
+Copyright (c) 2024 NVIDIA CORPORATION. Licensed under the MIT license.
+Adapted from https://github.com/jik876/hifi-gan under the MIT license.
 
+DiscriminatorB / MultiBandDiscriminator are based on descript-audio-codec
+(https://github.com/descriptinc/descript-audio-codec) with modified code adapted from
+https://github.com/gemelo-ai/vocos under the MIT license. DiscriminatorCQT is adapted
+from https://github.com/open-mmlab/Amphion/blob/main/models/vocoders/gan/discriminator/mssbcqtd.py
+under the MIT license. LICENSE files are in incl_licenses directory.
+
+CombinedDiscriminator chains multiple discriminator architectures (e.g. combine mbd and
+cqtd as a single class).
+"""
 
 import torch
 import torch.nn.functional as F
@@ -86,9 +94,8 @@ class DiscriminatorP(torch.nn.Module):
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         fmap = []
 
-        # 1d to 2d
         b, c, t = x.shape
-        if t % self.period != 0:  # pad first
+        if t % self.period != 0:
             n_pad = self.period - (t % self.period)
             x = F.pad(x, (0, n_pad), "reflect")
             t = t + n_pad
@@ -227,8 +234,8 @@ class DiscriminatorR(nn.Module):
             center=False,
             return_complex=True,
         )
-        x = torch.view_as_real(x)  # [B, F, TT, 2]
-        mag = torch.norm(x, p=2, dim=-1)  # [B, F, TT]
+        x = torch.view_as_real(x)
+        mag = torch.norm(x, p=2, dim=-1)
 
         return mag
 
@@ -266,9 +273,6 @@ class MultiResolutionDiscriminator(nn.Module):
         return y_d_rs, y_d_gs, fmap_rs, fmap_gs
 
 
-# Method based on descript-audio-codec: https://github.com/descriptinc/descript-audio-codec
-# Modified code adapted from https://github.com/gemelo-ai/vocos under the MIT license.
-#   LICENSE is in incl_licenses directory.
 class DiscriminatorB(nn.Module):
     def __init__(
         self,
@@ -309,14 +313,11 @@ class DiscriminatorB(nn.Module):
         self.conv_post = weight_norm(nn.Conv2d(channels, 1, (3, 3), (1, 1), padding=(1, 1)))
 
     def spectrogram(self, x: torch.Tensor) -> List[torch.Tensor]:
-        # Remove DC offset
         x = x - x.mean(dim=-1, keepdims=True)
-        # Peak normalize the volume of input audio
         x = 0.8 * x / (x.abs().max(dim=-1, keepdim=True)[0] + 1e-9)
         x = self.spec_fn(x)
         x = torch.view_as_real(x)
-        x = x.permute(0, 3, 2, 1)  # [B, F, T, C] -> [B, C, T, F]
-        # Split into bands
+        x = x.permute(0, 3, 2, 1)
         x_bands = [x[..., b[0] : b[1]] for b in self.bands]
         return x_bands
 
@@ -340,20 +341,12 @@ class DiscriminatorB(nn.Module):
         return x, fmap
 
 
-# Method based on descript-audio-codec: https://github.com/descriptinc/descript-audio-codec
-# Modified code adapted from https://github.com/gemelo-ai/vocos under the MIT license.
-#   LICENSE is in incl_licenses directory.
 class MultiBandDiscriminator(nn.Module):
     def __init__(
         self,
         h,
     ):
-        """
-        Multi-band multi-scale STFT discriminator, with the architecture based on https://github.com/descriptinc/descript-audio-codec.
-        and the modified code adapted from https://github.com/gemelo-ai/vocos.
-        """
         super().__init__()
-        # fft_sizes (list[int]): Tuple of window lengths for FFT. Defaults to [2048, 1024, 512] if not set in h.
         self.fft_sizes = h.get("mbd_fft_sizes", [2048, 1024, 512])
         self.discriminators = nn.ModuleList([DiscriminatorB(window_length=w) for w in self.fft_sizes])
 
@@ -381,8 +374,6 @@ class MultiBandDiscriminator(nn.Module):
         return y_d_rs, y_d_gs, fmap_rs, fmap_gs
 
 
-# Adapted from https://github.com/open-mmlab/Amphion/blob/main/models/vocoders/gan/discriminator/mssbcqtd.py under the MIT license.
-#   LICENSE is in incl_licenses directory.
 class DiscriminatorCQT(nn.Module):
     def __init__(self, cfg: AttrDict, hop_length: int, n_octaves: int, bins_per_octave: int):
         super().__init__()
@@ -402,7 +393,6 @@ class DiscriminatorCQT(nn.Module):
         self.n_octaves = n_octaves
         self.bins_per_octave = bins_per_octave
 
-        # Lazy-load
         from nnAudio import features
 
         self.cqt_transform = features.cqt.CQT2010v2(
@@ -499,9 +489,7 @@ class DiscriminatorCQT(nn.Module):
         fmap = []
 
         if self.cqtd_normalize_volume:
-            # Remove DC offset
             x = x - x.mean(dim=-1, keepdims=True)
-            # Peak normalize the volume of input audio
             x = 0.8 * x / (x.abs().max(dim=-1, keepdim=True)[0] + 1e-9)
 
         x = self.resample(x)
@@ -512,7 +500,7 @@ class DiscriminatorCQT(nn.Module):
         z_phase = z[:, :, :, 1].unsqueeze(1)
 
         z = torch.cat([z_amplitude, z_phase], dim=1)
-        z = torch.permute(z, (0, 1, 3, 2))  # [B, C, W, T] -> [B, C, T, W]
+        z = torch.permute(z, (0, 1, 3, 2))
 
         latent_z = []
         for i in range(self.n_octaves):
@@ -544,14 +532,12 @@ class MultiScaleSubbandCQTDiscriminator(nn.Module):
         super().__init__()
 
         self.cfg = cfg
-        # Using get with defaults
         self.cfg["cqtd_filters"] = self.cfg.get("cqtd_filters", 32)
         self.cfg["cqtd_max_filters"] = self.cfg.get("cqtd_max_filters", 1024)
         self.cfg["cqtd_filters_scale"] = self.cfg.get("cqtd_filters_scale", 1)
         self.cfg["cqtd_dilations"] = self.cfg.get("cqtd_dilations", [1, 2, 4])
         self.cfg["cqtd_in_channels"] = self.cfg.get("cqtd_in_channels", 1)
         self.cfg["cqtd_out_channels"] = self.cfg.get("cqtd_out_channels", 1)
-        # Multi-scale params to loop over
         self.cfg["cqtd_hop_lengths"] = self.cfg.get("cqtd_hop_lengths", [512, 256, 256])
         self.cfg["cqtd_n_octaves"] = self.cfg.get("cqtd_n_octaves", [9, 9, 9])
         self.cfg["cqtd_bins_per_octaves"] = self.cfg.get("cqtd_bins_per_octaves", [24, 36, 48])
@@ -593,11 +579,6 @@ class MultiScaleSubbandCQTDiscriminator(nn.Module):
 
 
 class CombinedDiscriminator(nn.Module):
-    """
-    Wrapper of chaining multiple discrimiantor architectures.
-    Example: combine mbd and cqtd as a single class
-    """
-
     def __init__(self, list_discriminator: List[nn.Module]):
         super().__init__()
         self.discrimiantor = nn.ModuleList(list_discriminator)

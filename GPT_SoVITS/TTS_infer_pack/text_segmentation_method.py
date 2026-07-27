@@ -42,25 +42,20 @@ splits = {
 
 
 def split_big_text(text, max_len=510):
-    # 定义全角和半角标点符号
     punctuation = "".join(splits)
 
-    # 切割文本
     segments = re.split("([" + punctuation + "])", text)
 
-    # 初始化结果列表和当前片段
     result = []
     current_segment = ""
 
     for segment in segments:
-        # 如果当前片段加上新的片段长度超过max_len，就将当前片段加入结果列表，并重置当前片段
         if len(current_segment + segment) > max_len:
             result.append(current_segment)
             current_segment = segment
         else:
             current_segment += segment
 
-    # 将最后一个片段加入结果列表
     if current_segment:
         result.append(current_segment)
 
@@ -76,7 +71,7 @@ def split(todo_text):
     todo_texts = []
     while 1:
         if i_split_head >= len_text:
-            break  # 结尾一定有标点，所以直接跳出即可，最后一段在上次已加入
+            break
         if todo_text[i_split_head] in splits:
             i_split_head += 1
             todo_texts.append(todo_text[i_split_tail:i_split_head])
@@ -86,7 +81,6 @@ def split(todo_text):
     return todo_texts
 
 
-# 不切
 @register_method("cut0")
 def cut0(inp):
     if not set(inp).issubset(punctuation):
@@ -95,7 +89,6 @@ def cut0(inp):
         return "/n"
 
 
-# 凑四句一切
 @register_method("cut1")
 def cut1(inp):
     inp = inp.strip("\n")
@@ -112,7 +105,6 @@ def cut1(inp):
     return "\n".join(opts)
 
 
-# 凑50字一切
 @register_method("cut2")
 def cut2(inp):
     inp = inp.strip("\n")
@@ -131,15 +123,13 @@ def cut2(inp):
             tmp_str = ""
     if tmp_str != "":
         opts.append(tmp_str)
-    # print(opts)
-    if len(opts) > 1 and len(opts[-1]) < 50:  ##如果最后一个太短了，和前一个合一起
+    if len(opts) > 1 and len(opts[-1]) < 50:
         opts[-2] = opts[-2] + opts[-1]
         opts = opts[:-1]
     opts = [item for item in opts if not set(item).issubset(punctuation)]
     return "\n".join(opts)
 
 
-# 按中文句号。切
 @register_method("cut3")
 def cut3(inp):
     inp = inp.strip("\n")
@@ -148,7 +138,6 @@ def cut3(inp):
     return "\n".join(opts)
 
 
-# 按英文句号.切
 @register_method("cut4")
 def cut4(inp):
     inp = inp.strip("\n")
@@ -157,8 +146,6 @@ def cut4(inp):
     return "\n".join(opts)
 
 
-# 按标点符号切
-# contributed by https://github.com/AI-Hobbyist/GPT-SoVITS/blob/main/GPT_SoVITS/inference_webui.py
 @register_method("cut5")
 def cut5(inp):
     inp = inp.strip("\n")

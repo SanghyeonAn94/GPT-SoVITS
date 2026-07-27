@@ -55,7 +55,6 @@ torch.backends.cudnn.benchmark = False
 
 def train(rank, a, h):
     if h.num_gpus > 1:
-        # initialize distributed
         init_process_group(
             backend=h.dist_config["dist_backend"],
             init_method=h.dist_config["dist_url"],
@@ -63,39 +62,31 @@ def train(rank, a, h):
             rank=rank,
         )
 
-    # Set seed and device
     torch.cuda.manual_seed(h.seed)
     torch.cuda.set_device(rank)
     device = torch.device(f"cuda:{rank:d}")
 
-    # Define BigVGAN generator
     generator = BigVGAN(h).to(device)
 
-    # Define discriminators. MPD is used by default
     mpd = MultiPeriodDiscriminator(h).to(device)
 
-    # Define additional discriminators. BigVGAN-v1 uses UnivNet's MRD as default
-    # New in BigVGAN-v2: option to switch to new discriminators: MultiBandDiscriminator / MultiScaleSubbandCQTDiscriminator
-    if h.get("use_mbd_instead_of_mrd", False):  # Switch to MBD
+    if h.get("use_mbd_instead_of_mrd", False):
         print("[INFO] using MultiBandDiscriminator of BigVGAN-v2 instead of MultiResolutionDiscriminator")
-        # Variable name is kept as "mrd" for backward compatibility & minimal code change
         mrd = MultiBandDiscriminator(h).to(device)
-    elif h.get("use_cqtd_instead_of_mrd", False):  # Switch to CQTD
+    elif h.get("use_cqtd_instead_of_mrd", False):
         print("[INFO] using MultiScaleSubbandCQTDiscriminator of BigVGAN-v2 instead of MultiResolutionDiscriminator")
         mrd = MultiScaleSubbandCQTDiscriminator(h).to(device)
-    else:  # Fallback to original MRD in BigVGAN-v1
+    else:
         mrd = MultiResolutionDiscriminator(h).to(device)
 
-    # New in BigVGAN-v2: option to switch to multi-scale L1 mel loss
     if h.get("use_multiscale_melloss", False):
         print("[INFO] using multi-scale Mel l1 loss of BigVGAN-v2 instead of the original single-scale loss")
         fn_mel_loss_multiscale = MultiScaleMelSpectrogramLoss(
             sampling_rate=h.sampling_rate
-        )  # NOTE: accepts waveform as input
+        )
     else:
         fn_mel_loss_singlescale = F.l1_loss
 
-    # Print the model & number of parameters, and create or scan the latest checkpoint from checkpoints directory
     if rank == 0:
         print(generator)
         print(mpd)
@@ -107,7 +98,6 @@ def train(rank, a, h):
         print(f"Checkpoints directory: {a.checkpoint_path}")
 
     if os.path.isdir(a.checkpoint_path):
-        # New in v2.1: If the step prefix pattern-based checkpoints are not found, also check for renamed files in Hugging Face Hub to resume training
         cp_g = scan_checkpoint(a.checkpoint_path, prefix="g_", renamed_file="bigvgan_generator.pt")
         cp_do = scan_checkpoint(
             a.checkpoint_path,
@@ -115,7 +105,6 @@ def train(rank, a, h):
             renamed_file="bigvgan_discriminator_optimizer.pt",
         )
 
-    # Load the latest checkpoint if exists
     steps = 0
     if cp_g is None or cp_do is None:
         state_dict_do = None
@@ -129,7 +118,6 @@ def train(rank, a, h):
         steps = state_dict_do["steps"] + 1
         last_epoch = state_dict_do["epoch"]
 
-    # Initialize DDP, optimizers, and schedulers
     if h.num_gpus > 1:
         generator = DistributedDataParallel(generator, device_ids=[rank]).to(device)
         mpd = DistributedDataParallel(mpd, device_ids=[rank]).to(device)
@@ -149,12 +137,6 @@ def train(rank, a, h):
     scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=h.lr_decay, last_epoch=last_epoch)
     scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optim_d, gamma=h.lr_decay, last_epoch=last_epoch)
 
-    # Define training and validation datasets
-
-    """
-    unseen_validation_filelist will contain sample filepaths outside the seen training & validation dataset
-    Example: trained on LibriTTS, validate on VCTK
-    """
     training_filelist, validation_filelist, list_unseen_validation_filelist = get_dataset_filelist(a)
 
     trainset = MelDataset(
@@ -252,15 +234,9 @@ def train(rank, a, h):
             list_unseen_validset.append(unseen_validset)
             list_unseen_validation_loader.append(unseen_validation_loader)
 
-        # Tensorboard logger
         sw = SummaryWriter(os.path.join(a.checkpoint_path, "logs"))
-        if a.save_audio:  # Also save audio to disk if --save_audio is set to True
+        if a.save_audio:
             os.makedirs(os.path.join(a.checkpoint_path, "samples"), exist_ok=True)
-
-    """
-    Validation loop, "mode" parameter is automatically defined as (seen or unseen)_(name of the dataset).
-    If the name of the dataset contains "nonspeech", it skips PESQ calculation to prevent errors 
-    """
 
     def validate(rank, a, h, loader, mode="seen"):
         assert rank == 0, "validate should only run on rank=0"
@@ -271,11 +247,10 @@ def train(rank, a, h):
         val_pesq_tot = 0
         val_mrstft_tot = 0
 
-        # Modules for evaluation metrics
         pesq_resampler = ta.transforms.Resample(h.sampling_rate, 16000).cuda()
         loss_mrstft = auraloss.freq.MultiResolutionSTFTLoss(device="cuda")
 
-        if a.save_audio:  # Also save audio to disk if --save_audio is set to True
+        if a.save_audio:
             os.makedirs(
                 os.path.join(a.checkpoint_path, "samples", f"gt_{mode}"),
                 exist_ok=True,
@@ -288,7 +263,6 @@ def train(rank, a, h):
         with torch.no_grad():
             print(f"step {steps} {mode} speaker validation...")
 
-            # Loop over validation set and compute metrics
             for j, batch in enumerate(tqdm(loader)):
                 x, y, _, y_mel = batch
                 y = y.to(device)
@@ -310,24 +284,20 @@ def train(rank, a, h):
                 min_t = min(y_mel.size(-1), y_g_hat_mel.size(-1))
                 val_err_tot += F.l1_loss(y_mel[..., :min_t], y_g_hat_mel[..., :min_t]).item()
 
-                # PESQ calculation. only evaluate PESQ if it's speech signal (nonspeech PESQ will error out)
-                if "nonspeech" not in mode:  # Skips if the name of dataset (in mode string) contains "nonspeech"
-                    # Resample to 16000 for pesq
+                if "nonspeech" not in mode:
                     y_16k = pesq_resampler(y)
                     y_g_hat_16k = pesq_resampler(y_g_hat.squeeze(1))
                     y_int_16k = (y_16k[0] * MAX_WAV_VALUE).short().cpu().numpy()
                     y_g_hat_int_16k = (y_g_hat_16k[0] * MAX_WAV_VALUE).short().cpu().numpy()
                     val_pesq_tot += pesq(16000, y_int_16k, y_g_hat_int_16k, "wb")
 
-                # MRSTFT calculation
                 min_t = min(y.size(-1), y_g_hat.size(-1))
                 val_mrstft_tot += loss_mrstft(y_g_hat[..., :min_t], y[..., :min_t]).item()
 
-                # Log audio and figures to Tensorboard
-                if j % a.eval_subsample == 0:  # Subsample every nth from validation set
+                if j % a.eval_subsample == 0:
                     if steps >= 0:
                         sw.add_audio(f"gt_{mode}/y_{j}", y[0], steps, h.sampling_rate)
-                        if a.save_audio:  # Also save audio to disk if --save_audio is set to True
+                        if a.save_audio:
                             save_audio(
                                 y[0],
                                 os.path.join(
@@ -350,7 +320,7 @@ def train(rank, a, h):
                         steps,
                         h.sampling_rate,
                     )
-                    if a.save_audio:  # Also save audio to disk if --save_audio is set to True
+                    if a.save_audio:
                         save_audio(
                             y_g_hat[0, 0],
                             os.path.join(
@@ -361,7 +331,6 @@ def train(rank, a, h):
                             ),
                             h.sampling_rate,
                         )
-                    # Spectrogram of synthesized audio
                     y_hat_spec = mel_spectrogram(
                         y_g_hat.squeeze(1),
                         h.n_fft,
@@ -378,9 +347,6 @@ def train(rank, a, h):
                         steps,
                     )
 
-                    """
-                    Visualization of spectrogram difference between GT and synthesized audio, difference higher than 1 is clipped for better visualization.
-                    """
                     spec_delta = torch.clamp(
                         torch.abs(x[0] - y_hat_spec.squeeze(0).cpu()),
                         min=1e-6,
@@ -395,14 +361,12 @@ def train(rank, a, h):
             val_err = val_err_tot / (j + 1)
             val_pesq = val_pesq_tot / (j + 1)
             val_mrstft = val_mrstft_tot / (j + 1)
-            # Log evaluation metrics to Tensorboard
             sw.add_scalar(f"validation_{mode}/mel_spec_error", val_err, steps)
             sw.add_scalar(f"validation_{mode}/pesq", val_pesq, steps)
             sw.add_scalar(f"validation_{mode}/mrstft", val_mrstft, steps)
 
         generator.train()
 
-    # If the checkpoint is loaded, start with validation loop
     if steps != 0 and rank == 0 and not a.debug:
         if not a.skip_seen:
             validate(
@@ -420,11 +384,9 @@ def train(rank, a, h):
                 list_unseen_validation_loader[i],
                 mode=f"unseen_{list_unseen_validation_loader[i].dataset.name}",
             )
-    # Exit the script if --evaluate is set to True
     if a.evaluate:
         exit()
 
-    # Main training loop
     generator.train()
     mpd.train()
     mrd.train()
@@ -460,20 +422,16 @@ def train(rank, a, h):
 
             optim_d.zero_grad()
 
-            # MPD
             y_df_hat_r, y_df_hat_g, _, _ = mpd(y, y_g_hat.detach())
             loss_disc_f, losses_disc_f_r, losses_disc_f_g = discriminator_loss(y_df_hat_r, y_df_hat_g)
 
-            # MRD
             y_ds_hat_r, y_ds_hat_g, _, _ = mrd(y, y_g_hat.detach())
             loss_disc_s, losses_disc_s_r, losses_disc_s_g = discriminator_loss(y_ds_hat_r, y_ds_hat_g)
 
             loss_disc_all = loss_disc_s + loss_disc_f
 
-            # Set clip_grad_norm value
-            clip_grad_norm = h.get("clip_grad_norm", 1000.0)  # Default to 1000
+            clip_grad_norm = h.get("clip_grad_norm", 1000.0)
 
-            # Whether to freeze D for initial training steps
             if steps >= a.freeze_step:
                 loss_disc_all.backward()
                 grad_norm_mpd = torch.nn.utils.clip_grad_norm_(mpd.parameters(), clip_grad_norm)
@@ -484,22 +442,18 @@ def train(rank, a, h):
                 grad_norm_mpd = 0.0
                 grad_norm_mrd = 0.0
 
-            # Generator
             optim_g.zero_grad()
 
-            # L1 Mel-Spectrogram Loss
-            lambda_melloss = h.get("lambda_melloss", 45.0)  # Defaults to 45 in BigVGAN-v1 if not set
-            if h.get("use_multiscale_melloss", False):  # uses wav <y, y_g_hat> for loss
+            lambda_melloss = h.get("lambda_melloss", 45.0)
+            if h.get("use_multiscale_melloss", False):
                 loss_mel = fn_mel_loss_multiscale(y, y_g_hat) * lambda_melloss
-            else:  # Uses mel <y_mel, y_g_hat_mel> for loss
+            else:
                 loss_mel = fn_mel_loss_singlescale(y_mel, y_g_hat_mel) * lambda_melloss
 
-            # MPD loss
             y_df_hat_r, y_df_hat_g, fmap_f_r, fmap_f_g = mpd(y, y_g_hat)
             loss_fm_f = feature_loss(fmap_f_r, fmap_f_g)
             loss_gen_f, losses_gen_f = generator_loss(y_df_hat_g)
 
-            # MRD loss
             y_ds_hat_r, y_ds_hat_g, fmap_s_r, fmap_s_g = mrd(y, y_g_hat)
             loss_fm_s = feature_loss(fmap_s_r, fmap_s_g)
             loss_gen_s, losses_gen_s = generator_loss(y_ds_hat_g)
@@ -515,9 +469,8 @@ def train(rank, a, h):
             optim_g.step()
 
             if rank == 0:
-                # STDOUT logging
                 if steps % a.stdout_interval == 0:
-                    mel_error = loss_mel.item() / lambda_melloss  # Log training mel regression loss to stdout
+                    mel_error = loss_mel.item() / lambda_melloss
                     print(
                         f"Steps: {steps:d}, "
                         f"Gen Loss Total: {loss_gen_all:4.3f}, "
@@ -527,7 +480,6 @@ def train(rank, a, h):
                         f"grad_norm_g: {grad_norm_g:4.3f}"
                     )
 
-                # Checkpointing
                 if steps % a.checkpoint_interval == 0 and steps != 0:
                     checkpoint_path = f"{a.checkpoint_path}/g_{steps:08d}"
                     save_checkpoint(
@@ -547,9 +499,8 @@ def train(rank, a, h):
                         },
                     )
 
-                # Tensorboard summary logging
                 if steps % a.summary_interval == 0:
-                    mel_error = loss_mel.item() / lambda_melloss  # Log training mel regression loss to tensorboard
+                    mel_error = loss_mel.item() / lambda_melloss
                     sw.add_scalar("training/gen_loss_total", loss_gen_all.item(), steps)
                     sw.add_scalar("training/mel_spec_error", mel_error, steps)
                     sw.add_scalar("training/fm_loss_mpd", loss_fm_f.item(), steps)
@@ -565,9 +516,7 @@ def train(rank, a, h):
                     sw.add_scalar("training/learning_rate_g", scheduler_g.get_last_lr()[0], steps)
                     sw.add_scalar("training/epoch", epoch + 1, steps)
 
-                # Validation
                 if steps % a.validation_interval == 0:
-                    # Plot training input x so far used
                     for i_x in range(x.shape[0]):
                         sw.add_figure(
                             f"training_input/x_{i_x}",
@@ -581,7 +530,6 @@ def train(rank, a, h):
                             h.sampling_rate,
                         )
 
-                    # Seen and unseen speakers validation loops
                     if not a.debug and steps != 0:
                         validate(
                             rank,
@@ -600,7 +548,6 @@ def train(rank, a, h):
                             )
             steps += 1
 
-            # BigVGAN-v2 learning rate scheduler is changed from epoch-level to step-level
             scheduler_g.step()
             scheduler_d.step()
 

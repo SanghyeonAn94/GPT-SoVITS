@@ -28,13 +28,11 @@ print_help() {
     echo "  bash docker_build.sh --cuda 12.6 --funasr --faster-whisper"
 }
 
-# Show help if no arguments provided
 if [[ $# -eq 0 ]]; then
     print_help
     exit 0
 fi
 
-# Parse arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
     --cuda)

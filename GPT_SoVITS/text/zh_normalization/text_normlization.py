@@ -63,16 +63,8 @@ class TextNormalizer:
         self.SENTENCE_SPLITOR = re.compile(r"([：、，；。？！,;?!][”’]?)")
 
     def _split(self, text: str, lang="zh") -> List[str]:
-        """Split long text into sentences with sentence-splitting punctuations.
-        Args:
-            text (str): The input text.
-        Returns:
-            List[str]: Sentences.
-        """
-        # Only for pure Chinese here
         if lang == "zh":
             text = text.replace(" ", "")
-            # 过滤掉特殊字符
             text = re.sub(r"[——《》【】<>{}()（）#&@“”^_|\\]", "", text)
         text = self.SENTENCE_SPLITOR.sub(r"\1\n", text)
         text = text.strip()
@@ -81,8 +73,6 @@ class TextNormalizer:
 
     def _post_replace(self, sentence: str) -> str:
         sentence = sentence.replace("/", "每")
-        # sentence = sentence.replace('~', '至')
-        # sentence = sentence.replace('～', '至')
         sentence = sentence.replace("①", "一")
         sentence = sentence.replace("②", "二")
         sentence = sentence.replace("③", "三")
@@ -117,35 +107,28 @@ class TextNormalizer:
         sentence = sentence.replace("χ", "器")
         sentence = sentence.replace("ψ", "普赛").replace("Ψ", "普赛")
         sentence = sentence.replace("ω", "欧米伽").replace("Ω", "欧米伽")
-        # 兜底数学运算，顺便兼容懒人用语
         sentence = sentence.replace("+", "加")
         sentence = sentence.replace("-", "减")
         sentence = sentence.replace("×", "乘")
         sentence = sentence.replace("÷", "除")
         sentence = sentence.replace("=", "等")
-        # re filter special characters, have one more character "-" than line 68
         sentence = re.sub(r"[-——《》【】<=>{}()（）#&@“”^_|\\]", "", sentence)
         return sentence
 
     def normalize_sentence(self, sentence: str) -> str:
-        # basic character conversions
         sentence = tranditional_to_simplified(sentence)
         sentence = sentence.translate(F2H_ASCII_LETTERS).translate(F2H_DIGITS).translate(F2H_SPACE)
 
-        # number related NSW verbalization
         sentence = RE_DATE.sub(replace_date, sentence)
         sentence = RE_DATE2.sub(replace_date2, sentence)
 
-        # range first
         sentence = RE_TIME_RANGE.sub(replace_time, sentence)
         sentence = RE_TIME.sub(replace_time, sentence)
 
-        # 处理~波浪号作为至的替换
         sentence = RE_TO_RANGE.sub(replace_to_range, sentence)
         sentence = RE_TEMPERATURE.sub(replace_temperature, sentence)
         sentence = replace_measure(sentence)
 
-        # 处理数学运算
         while RE_ASMD.search(sentence):
             sentence = RE_ASMD.sub(replace_asmd, sentence)
         sentence = RE_POWER.sub(replace_power, sentence)

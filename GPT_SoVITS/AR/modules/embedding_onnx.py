@@ -1,4 +1,8 @@
-# modified from https://github.com/lifeiteng/vall-e/blob/main/valle/modules/embedding.py
+"""Token and sinusoidal positional embeddings (ONNX export variant).
+
+modified from https://github.com/lifeiteng/vall-e/blob/main/valle/modules/embedding.py
+"""
+
 import math
 
 import torch

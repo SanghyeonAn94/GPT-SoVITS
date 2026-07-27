@@ -1,5 +1,8 @@
-# modified from https://github.com/yangdongchao/SoundStorm/blob/master/soundstorm/s1/AR/text_processing/phonemizer.py
-# reference: https://github.com/lifeiteng/vall-e
+"""Gruut-based English phonemizer producing IPA and mapping to symbol ids.
+
+Modified from https://github.com/yangdongchao/SoundStorm and https://github.com/lifeiteng/vall-e.
+"""
+
 import itertools
 import re
 from typing import Dict
@@ -45,7 +48,6 @@ class GruutPhonemizer:
             return word.text.strip()
 
         phonemes = "".join(word.phonemes)
-        # remove modifier characters ˈˌː with regex
         phonemes = re.sub(r"[ˈˌː͡]", "", phonemes)
         return phonemes.strip()
 
@@ -56,14 +58,11 @@ class GruutPhonemizer:
         return " ".join(words)
 
     def transform(self, phonemes):
-        # convert phonemes to ids
-        # dictionary is in symbols.py
         return [self.symbol_to_id[p] for p in phonemes if p in self.symbol_to_id.keys()]
 
 
 if __name__ == "__main__":
     phonemizer = GruutPhonemizer("en-us")
-    # text -> IPA
     phonemes = phonemizer.phonemize("Hello, wor-ld ?")
     print("phonemes:", phonemes)
     print("len(phonemes):", len(phonemes))

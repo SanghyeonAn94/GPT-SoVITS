@@ -1,5 +1,10 @@
-# modified from https://github.com/yangdongchao/SoundStorm/blob/master/soundstorm/s1/AR/data/bucket_sampler.py
-# reference: https://github.com/lifeiteng/vall-e
+"""Distributed bucket sampler that sorts the dataset by input length, groups samples
+into buckets, and batches within buckets for text-to-semantic training.
+
+Modified from https://github.com/yangdongchao/SoundStorm/blob/master/soundstorm/s1/AR/data/bucket_sampler.py
+Reference: https://github.com/lifeiteng/vall-e
+"""
+
 import itertools
 import math
 import random
@@ -18,14 +23,6 @@ T_co = TypeVar("T_co", covariant=True)
 
 
 class DistributedBucketSampler(Sampler[T_co]):
-    r"""
-    sort the dataset wrt. input length
-    divide samples into buckets
-    sort within buckets
-    divide buckets into batches
-    sort batches
-    """
-
     def __init__(
         self,
         dataset: Dataset,
@@ -53,12 +50,7 @@ class DistributedBucketSampler(Sampler[T_co]):
         self.rank = rank
         self.epoch = 0
         self.drop_last = drop_last
-        # If the dataset length is evenly divisible by # of replicas, then there
-        # is no need to drop any data, since the dataset will be split equally.
         if self.drop_last and len(self.dataset) % self.num_replicas != 0:  # type: ignore[arg-type]
-            # Split to nearest available length that is evenly divisible.
-            # This is to ensure each rank receives the same amount of data when
-            # using this Sampler.
             self.num_samples = math.ceil(
                 (len(self.dataset) - self.num_replicas) / self.num_replicas,  # type: ignore[arg-type]
             )
@@ -97,7 +89,6 @@ class DistributedBucketSampler(Sampler[T_co]):
 
     def __iter__(self) -> Iterator[T_co]:
         if self.shuffle:
-            # deterministically shuffle based on epoch and seed
             g = torch.Generator()
             g.manual_seed(self.seed + self.epoch)
             random.seed(self.epoch + self.seed)
@@ -117,18 +108,15 @@ class DistributedBucketSampler(Sampler[T_co]):
             indices = list(range(len(self.dataset)))
 
         if not self.drop_last:
-            # add extra samples to make it evenly divisible
             padding_size = self.total_size - len(indices)
             if padding_size <= len(indices):
                 indices += indices[:padding_size]
             else:
                 indices += (indices * math.ceil(padding_size / len(indices)))[:padding_size]
         else:
-            # remove tail of data to make it evenly divisible.
             indices = indices[: self.total_size]
         assert len(indices) == self.total_size
 
-        # subsample
         indices = indices[self.rank : self.total_size : self.num_replicas]
         assert len(indices) == self.num_samples
 
@@ -138,12 +126,4 @@ class DistributedBucketSampler(Sampler[T_co]):
         return self.num_samples
 
     def set_epoch(self, epoch: int) -> None:
-        r"""
-        Sets the epoch for this sampler. When :attr:`shuffle=True`, this ensures all replicas
-        use a different random ordering for each epoch. Otherwise, the next iteration of this
-        sampler will yield the same ordering.
-
-        Args:
-            epoch (int): Epoch number.
-        """
         self.epoch = epoch

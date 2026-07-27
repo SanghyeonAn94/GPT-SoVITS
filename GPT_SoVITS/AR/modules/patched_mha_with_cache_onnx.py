@@ -1,3 +1,5 @@
+"""ONNX-export-friendly multi_head_attention_forward with a key/value cache."""
+
 from torch.nn.functional import *
 from torch.nn.functional import (
     _canonical_mask,
@@ -32,7 +34,6 @@ def multi_head_attention_forward_patched(
     is_causal: bool = False,
     cache=None,
 ) -> Tuple[Tensor, Optional[Tensor]]:
-    # set up shape vars
     _, _, embed_dim = query.shape
     attn_mask = _canonical_mask(
         mask=attn_mask,

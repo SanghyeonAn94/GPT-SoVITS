@@ -177,7 +177,6 @@ class ERes2Net(nn.Module):
         self.layer3 = self._make_layer(block_fuse, m_channels * 4, num_blocks[2], stride=2)
         self.layer4 = self._make_layer(block_fuse, m_channels * 8, num_blocks[3], stride=2)
 
-        # Downsampling module for each layer
         self.layer1_downsample = nn.Conv2d(
             m_channels * 2, m_channels * 4, kernel_size=3, stride=2, padding=1, bias=False
         )
@@ -188,7 +187,6 @@ class ERes2Net(nn.Module):
             m_channels * 8, m_channels * 16, kernel_size=3, padding=1, stride=2, bias=False
         )
 
-        # Bottom-up fusion module
         self.fuse_mode12 = AFF(channels=m_channels * 4)
         self.fuse_mode123 = AFF(channels=m_channels * 8)
         self.fuse_mode1234 = AFF(channels=m_channels * 16)
@@ -212,7 +210,7 @@ class ERes2Net(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        x = x.permute(0, 2, 1)  # (B,T,F) => (B,F,T)
+        x = x.permute(0, 2, 1)
         x = x.unsqueeze_(1)
         out = F.relu(self.bn1(self.conv1(x)))
         out1 = self.layer1(out)
@@ -237,7 +235,7 @@ class ERes2Net(nn.Module):
             return embed_a
 
     def forward3(self, x):
-        x = x.permute(0, 2, 1)  # (B,T,F) => (B,F,T)
+        x = x.permute(0, 2, 1)
         x = x.unsqueeze_(1)
         out = F.relu(self.bn1(self.conv1(x)))
         out1 = self.layer1(out)
@@ -258,7 +256,7 @@ if __name__ == "__main__":
     model = ERes2Net(feat_dim=80, embedding_size=192, pooling_func="TSTP")
     model.eval()
     out = model(x)
-    print(out.shape)  # torch.Size([10, 192])
+    print(out.shape)
 
     num_params = sum(param.numel() for param in model.parameters())
-    print("{} M".format(num_params / 1e6))  # 6.61M
+    print("{} M".format(num_params / 1e6))

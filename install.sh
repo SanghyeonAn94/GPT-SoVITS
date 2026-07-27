@@ -1,6 +1,5 @@
 #!/bin/bash
 
-# cd into GPT-SoVITS Base Path
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 
 cd "$SCRIPT_DIR" || exit 1
@@ -85,13 +84,11 @@ print_help() {
     echo "  bash install.sh --device MPS --source ModelScope"
 }
 
-# Show help if no arguments provided
 if [[ $# -eq 0 ]]; then
     print_help
     exit 0
 fi
 
-# Parse arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
     --source)
@@ -181,7 +178,6 @@ ppc64le) SYSROOT_PKG="sysroot_linux-ppc64le>=2.28" ;;
     ;;
 esac
 
-# Install build tools
 echo -e "${INFO}Detected system: $(uname -s) $(uname -r) $(uname -m)"
 if [ "$(uname)" != "Darwin" ]; then
     gcc_major_version=$(command -v gcc >/dev/null 2>&1 && gcc -dumpversion | cut -d. -f1 || echo 0)

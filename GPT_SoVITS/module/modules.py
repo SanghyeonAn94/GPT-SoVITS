@@ -81,10 +81,6 @@ class ConvReluNorm(nn.Module):
 
 
 class DDSConv(nn.Module):
-    """
-    Dialted and Depth-Separable Convolution
-    """
-
     def __init__(self, channels, kernel_size, n_layers, p_dropout=0.0):
         super().__init__()
         self.channels = channels
@@ -169,7 +165,6 @@ class WN(torch.nn.Module):
             in_layer = torch.nn.utils.weight_norm(in_layer, name="weight")
             self.in_layers.append(in_layer)
 
-            # last one is not necessary
             if i < n_layers - 1:
                 res_skip_channels = 2 * hidden_channels
             else:
@@ -485,7 +480,7 @@ class ConvFlow(nn.Module):
         h = self.proj(h) * x_mask
 
         b, c, t = x0.shape
-        h = h.reshape(b, c, -1, t).permute(0, 1, 3, 2)  # [b, cx?, t] -> [b, c, t, ?]
+        h = h.reshape(b, c, -1, t).permute(0, 1, 3, 2)
 
         unnormalized_widths = h[..., : self.num_bins] / math.sqrt(self.filter_channels)
         unnormalized_heights = h[..., self.num_bins : 2 * self.num_bins] / math.sqrt(self.filter_channels)
@@ -537,11 +532,6 @@ class Mish(nn.Module):
 
 
 class Conv1dGLU(nn.Module):
-    """
-    Conv1d + GLU(Gated Linear Unit) with residual connection.
-    For GLU refer to https://arxiv.org/abs/1612.08083 paper.
-    """
-
     def __init__(self, in_channels, out_channels, kernel_size, dropout):
         super(Conv1dGLU, self).__init__()
         self.out_channels = out_channels
@@ -594,8 +584,6 @@ class ConvNorm(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
-    """Multi-Head Attention module"""
-
     def __init__(self, n_head, d_model, d_k, d_v, dropout=0.0, spectral_norm=False):
         super().__init__()
 
@@ -627,18 +615,18 @@ class MultiHeadAttention(nn.Module):
         q = self.w_qs(x).view(sz_b, len_x, n_head, d_k)
         k = self.w_ks(x).view(sz_b, len_x, n_head, d_k)
         v = self.w_vs(x).view(sz_b, len_x, n_head, d_v)
-        q = q.permute(2, 0, 1, 3).contiguous().view(-1, len_x, d_k)  # (n*b) x lq x dk
-        k = k.permute(2, 0, 1, 3).contiguous().view(-1, len_x, d_k)  # (n*b) x lk x dk
-        v = v.permute(2, 0, 1, 3).contiguous().view(-1, len_x, d_v)  # (n*b) x lv x dv
+        q = q.permute(2, 0, 1, 3).contiguous().view(-1, len_x, d_k)
+        k = k.permute(2, 0, 1, 3).contiguous().view(-1, len_x, d_k)
+        v = v.permute(2, 0, 1, 3).contiguous().view(-1, len_x, d_v)
 
         if mask is not None:
-            slf_mask = mask.repeat(n_head, 1, 1)  # (n*b) x .. x ..
+            slf_mask = mask.repeat(n_head, 1, 1)
         else:
             slf_mask = None
         output, attn = self.attention(q, k, v, mask=slf_mask)
 
         output = output.view(n_head, sz_b, len_x, d_v)
-        output = output.permute(1, 2, 0, 3).contiguous().view(sz_b, len_x, -1)  # b x lq x (n*dv)
+        output = output.permute(1, 2, 0, 3).contiguous().view(sz_b, len_x, -1)
 
         output = self.fc(output)
 
@@ -647,8 +635,6 @@ class MultiHeadAttention(nn.Module):
 
 
 class ScaledDotProductAttention(nn.Module):
-    """Scaled Dot-Product Attention"""
-
     def __init__(self, temperature, dropout):
         super().__init__()
         self.temperature = temperature
@@ -670,8 +656,6 @@ class ScaledDotProductAttention(nn.Module):
 
 
 class MelStyleEncoder(nn.Module):
-    """MelStyleEncoder"""
-
     def __init__(
         self,
         n_mel_channels=80,
@@ -732,19 +716,14 @@ class MelStyleEncoder(nn.Module):
         max_len = x.shape[1]
         slf_attn_mask = mask.unsqueeze(1).expand(-1, max_len, -1) if mask is not None else None
 
-        # spectral
         x = self.spectral(x)
-        # temporal
         x = x.transpose(1, 2)
         x = self.temporal(x)
         x = x.transpose(1, 2)
-        # self-attention
         if mask is not None:
             x = x.masked_fill(mask.unsqueeze(-1), 0)
         x, _ = self.slf_attn(x, mask=slf_attn_mask)
-        # fc
         x = self.fc(x)
-        # temoral average pooling
         w = self.temporal_avg_pool(x, mask=mask)
         return w.unsqueeze(-1)
 
@@ -821,7 +800,7 @@ class ActNorm(nn.Module):
             return z
         else:
             z = (self.bias + torch.exp(self.logs) * x) * x_mask
-            logdet = torch.sum(self.logs) * x_len  # [b]
+            logdet = torch.sum(self.logs) * x_len
             return z, logdet
 
     def store_inverse(self):
@@ -881,7 +860,7 @@ class InvConvNear(nn.Module):
             if self.no_jacobian:
                 logdet = 0
             else:
-                logdet = torch.logdet(self.weight) * (c / self.n_split) * x_len  # [b]
+                logdet = torch.logdet(self.weight) * (c / self.n_split) * x_len
 
         weight = weight.view(self.n_split, self.n_split, 1, 1)
         z = F.conv2d(x, weight)

@@ -1,15 +1,4 @@
 #!/usr/bin/env bash
-# Build, push, and roll out GPT-SoVITS RunPod image.
-#
-# Usage:
-#   ./scripts/build_and_push.sh                  # auto-increment vN (queries ECR)
-#   ./scripts/build_and_push.sh v6               # explicit tag
-#   ./scripts/build_and_push.sh --no-push        # build only
-#   ./scripts/build_and_push.sh --no-runpod      # build + push, skip template update
-#
-# Required env (or ~/.aws/credentials, RunPod console):
-#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY      (or FORGE_AWS_* alternatives)
-#   RUNPOD_API_KEY                                (only if RunPod update enabled)
 
 set -euo pipefail
 
@@ -40,7 +29,6 @@ if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
 fi
 export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
 
-# Auto-increment vN tag by inspecting existing ECR tags.
 if [ -z "$TAG" ]; then
   echo ">> Querying ECR for latest vN tag..."
   last=$(aws ecr-public describe-images \
@@ -81,10 +69,6 @@ if [ "$PUSH" -eq 0 ]; then
   exit 0
 fi
 
-# Isolate docker config in a temp dir to bypass wincred / desktop credential
-# helpers that often choke on the long ECR token (esp. on Docker Desktop +
-# WSL). The ephemeral config has no credsStore, so login writes auth to a
-# plain JSON file and push reads from it.
 DOCKER_CONFIG=$(mktemp -d -t docker-cfg-XXXXXX)
 export DOCKER_CONFIG
 trap 'rm -rf "$DOCKER_CONFIG"' EXIT

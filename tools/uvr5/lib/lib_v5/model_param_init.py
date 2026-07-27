@@ -3,8 +3,8 @@ import pathlib
 
 default_param = {}
 default_param["bins"] = 768
-default_param["unstable_bins"] = 9  # training only
-default_param["reduction_bins"] = 762  # training only
+default_param["unstable_bins"] = 9
+default_param["reduction_bins"] = 762
 default_param["sr"] = 44100
 default_param["pre_filter_start"] = 757
 default_param["pre_filter_stop"] = 768
@@ -17,7 +17,7 @@ default_param["band"][1] = {
     "n_fft": 960,
     "crop_start": 0,
     "crop_stop": 245,
-    "lpf_start": 61,  # inference only
+    "lpf_start": 61,
     "res_type": "polyphase",
 }
 
@@ -27,7 +27,7 @@ default_param["band"][2] = {
     "n_fft": 1536,
     "crop_start": 24,
     "crop_stop": 547,
-    "hpf_start": 81,  # inference only
+    "hpf_start": 81,
     "res_type": "sinc_best",
 }
 

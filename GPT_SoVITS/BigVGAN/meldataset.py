@@ -17,7 +17,7 @@ from tqdm import tqdm
 from typing import List, Tuple, Optional
 from .env import AttrDict
 
-MAX_WAV_VALUE = 32767.0  # NOTE: 32768.0 -1 to prevent int16 overflow (results in popping sound in corner cases)
+MAX_WAV_VALUE = 32767.0
 
 
 def dynamic_range_compression(x, C=1, clip_val=1e-5):
@@ -59,24 +59,6 @@ def mel_spectrogram(
     fmax: int = None,
     center: bool = False,
 ) -> torch.Tensor:
-    """
-    Calculate the mel spectrogram of an input signal.
-    This function uses slaney norm for the librosa mel filterbank (using librosa.filters.mel) and uses Hann window for STFT (using torch.stft).
-
-    Args:
-        y (torch.Tensor): Input signal.
-        n_fft (int): FFT size.
-        num_mels (int): Number of mel bins.
-        sampling_rate (int): Sampling rate of the input signal.
-        hop_size (int): Hop size for STFT.
-        win_size (int): Window size for STFT.
-        fmin (int): Minimum frequency for mel filterbank.
-        fmax (int): Maximum frequency for mel filterbank. If None, defaults to half the sampling rate (fmax = sr / 2.0) inside librosa_mel_fn
-        center (bool): Whether to pad the input to center the frames. Default is False.
-
-    Returns:
-        torch.Tensor: Mel spectrogram.
-    """
     if torch.min(y) < -1.0:
         print(f"[WARNING] Min value of input waveform signal is {torch.min(y)}")
     if torch.max(y) > 1.0:
@@ -117,16 +99,6 @@ def mel_spectrogram(
 
 
 def get_mel_spectrogram(wav, h):
-    """
-    Generate mel spectrogram from a waveform using given hyperparameters.
-
-    Args:
-        wav (torch.Tensor): Input waveform.
-        h: Hyperparameters object with attributes n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax.
-
-    Returns:
-        torch.Tensor: Mel spectrogram.
-    """
     return mel_spectrogram(
         wav,
         h.n_fft,
@@ -223,25 +195,17 @@ class MelDataset(torch.utils.data.Dataset):
         try:
             filename = self.audio_files[index]
 
-            # Use librosa.load that ensures loading waveform into mono with [-1, 1] float values
-            # Audio is ndarray with shape [T_time]. Disable auto-resampling here to minimize overhead
-            # The on-the-fly resampling during training will be done only for the obtained random chunk
             audio, source_sampling_rate = librosa.load(filename, sr=None, mono=True)
 
-            # Main logic that uses <mel, audio> pair for training BigVGAN
             if not self.fine_tuning:
-                if self.split:  # Training step
-                    # Obtain randomized audio chunk
+                if self.split:
                     if source_sampling_rate != self.sampling_rate:
-                        # Adjust segment size to crop if the source sr is different
                         target_segment_size = math.ceil(self.segment_size * (source_sampling_rate / self.sampling_rate))
                     else:
                         target_segment_size = self.segment_size
 
-                    # Compute upper bound index for the random chunk
                     random_chunk_upper_bound = max(0, audio.shape[0] - target_segment_size)
 
-                    # Crop or pad audio to obtain random chunk with target_segment_size
                     if audio.shape[0] >= target_segment_size:
                         audio_start = random.randint(0, random_chunk_upper_bound)
                         audio = audio[audio_start : audio_start + target_segment_size]
@@ -252,7 +216,6 @@ class MelDataset(torch.utils.data.Dataset):
                             mode="constant",
                         )
 
-                    # Resample audio chunk to self.sampling rate
                     if source_sampling_rate != self.sampling_rate:
                         audio = librosa.resample(
                             audio,
@@ -260,29 +223,23 @@ class MelDataset(torch.utils.data.Dataset):
                             target_sr=self.sampling_rate,
                         )
                         if audio.shape[0] > self.segment_size:
-                            # trim last elements to match self.segment_size (e.g., 16385 for 44khz downsampled to 24khz -> 16384)
                             audio = audio[: self.segment_size]
 
-                else:  # Validation step
-                    # Resample full audio clip to target sampling rate
+                else:
                     if source_sampling_rate != self.sampling_rate:
                         audio = librosa.resample(
                             audio,
                             orig_sr=source_sampling_rate,
                             target_sr=self.sampling_rate,
                         )
-                    # Trim last elements to match audio length to self.hop_size * n for evaluation
                     if (audio.shape[0] % self.hop_size) != 0:
                         audio = audio[: -(audio.shape[0] % self.hop_size)]
 
-                # BigVGAN is trained using volume-normalized waveform
                 audio = librosa.util.normalize(audio) * 0.95
 
-                # Cast ndarray to torch tensor
                 audio = torch.FloatTensor(audio)
-                audio = audio.unsqueeze(0)  # [B(1), self.segment_size]
+                audio = audio.unsqueeze(0)
 
-                # Compute mel spectrogram corresponding to audio
                 mel = mel_spectrogram(
                     audio,
                     self.n_fft,
@@ -293,21 +250,16 @@ class MelDataset(torch.utils.data.Dataset):
                     self.fmin,
                     self.fmax,
                     center=False,
-                )  # [B(1), self.num_mels, self.segment_size // self.hop_size]
+                )
 
-            # Fine-tuning logic that uses pre-computed mel. Example: Using TTS model-generated mel as input
             else:
-                # For fine-tuning, assert that the waveform is in the defined sampling_rate
-                # Fine-tuning won't support on-the-fly resampling to be fool-proof (the dataset should have been prepared properly)
                 assert source_sampling_rate == self.sampling_rate, (
                     f"For fine_tuning, waveform must be in the spcified sampling rate {self.sampling_rate}, got {source_sampling_rate}"
                 )
 
-                # Cast ndarray to torch tensor
                 audio = torch.FloatTensor(audio)
-                audio = audio.unsqueeze(0)  # [B(1), T_time]
+                audio = audio.unsqueeze(0)
 
-                # Load pre-computed mel from disk
                 mel = np.load(
                     os.path.join(
                         self.base_mels_path,
@@ -317,7 +269,7 @@ class MelDataset(torch.utils.data.Dataset):
                 mel = torch.from_numpy(mel)
 
                 if len(mel.shape) < 3:
-                    mel = mel.unsqueeze(0)  # ensure [B, C, T]
+                    mel = mel.unsqueeze(0)
 
                 if self.split:
                     frames_per_seg = math.ceil(self.segment_size / self.hop_size)
@@ -330,13 +282,9 @@ class MelDataset(torch.utils.data.Dataset):
                             mel_start * self.hop_size : (mel_start + frames_per_seg) * self.hop_size,
                         ]
 
-                    # Pad pre-computed mel and audio to match length to ensuring fine-tuning without error.
-                    # NOTE: this may introduce a single-frame misalignment of the <pre-computed mel, audio>
-                    # To remove possible misalignment, it is recommended to prepare the <pre-computed mel, audio> pair where the audio length is the integer multiple of self.hop_size
                     mel = torch.nn.functional.pad(mel, (0, frames_per_seg - mel.size(2)), "constant")
                     audio = torch.nn.functional.pad(audio, (0, self.segment_size - audio.size(1)), "constant")
 
-            # Compute mel_loss used by spectral regression objective. Uses self.fmax_loss instead (usually None)
             mel_loss = mel_spectrogram(
                 audio,
                 self.n_fft,
@@ -347,9 +295,8 @@ class MelDataset(torch.utils.data.Dataset):
                 self.fmin,
                 self.fmax_loss,
                 center=False,
-            )  # [B(1), self.num_mels, self.segment_size // self.hop_size]
+            )
 
-            # Shape sanity checks
             assert (
                 audio.shape[1] == mel.shape[2] * self.hop_size and audio.shape[1] == mel_loss.shape[2] * self.hop_size
             ), (
@@ -358,10 +305,9 @@ class MelDataset(torch.utils.data.Dataset):
 
             return (mel.squeeze(), audio.squeeze(0), filename, mel_loss.squeeze())
 
-        # If it encounters error during loading the data, skip this sample and load random other sample to the batch
         except Exception as e:
             if self.fine_tuning:
-                raise e  # Terminate training if it is fine-tuning. The dataset should have been prepared properly.
+                raise e
             else:
                 print(f"[WARNING] Failed to load waveform, skipping! filename: {filename} Error: {e}")
                 return self[random.randrange(len(self))]

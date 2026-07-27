@@ -1,3 +1,5 @@
+"""Faster Whisper ASR: downloads models, prefers matching .lab transcripts, falls back to Whisper (and FunASR for Chinese), writing GPT-SoVITS .list annotations via a singleton model manager."""
+
 import argparse
 import os
 import time
@@ -86,23 +88,8 @@ def download_model(model_size: str):
 
 
 def find_matching_lab_file(audio_path: str) -> str | None:
-    """
-    Find a matching .lab file for the given audio file.
-
-    Matching rules:
-    - Same filename with .lab extension
-    - e.g., vo_ABLQ005_5_guainiao_01.wav -> vo_ABLQ005_5_guainiao_01.lab
-
-    Args:
-        audio_path: Path to audio file (.wav, .WAV, etc.)
-
-    Returns:
-        Path to matching .lab file if exists, None otherwise
-    """
-    # Get base path without extension
     base_path = os.path.splitext(audio_path)[0]
 
-    # Check for .lab file (case-insensitive)
     lab_candidates = [
         f"{base_path}.lab",
         f"{base_path}.LAB",
@@ -117,25 +104,17 @@ def find_matching_lab_file(audio_path: str) -> str | None:
 
 
 def execute_asr(input_folder, output_folder, model_path, language, precision):
-    """
-    Execute ASR (Speech-to-Text) using singleton model manager.
-
-    Model is kept loaded in memory across multiple calls for better performance.
-    """
     if language == "auto":
-        language = None  # 不设置语种由模型自动输出概率最高的语种
+        language = None
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # Use singleton model manager instead of creating new model each time
     manager = get_stt_model_manager()
     print(f"Using STT model manager (loaded={manager.is_loaded()}, model_path={model_path})")
 
-    # Acquire model from manager (reuses cached model if parameters match)
     with manager.get_model(model_path, device, precision) as model:
         print(f"STT model acquired (device={device}, precision={precision})")
 
-        # Filter: only audio files
         input_file_names = [
             f for f in os.listdir(input_folder)
             if os.path.splitext(f.lower())[1] in AUDIO_EXTENSIONS
@@ -159,7 +138,6 @@ def execute_asr(input_folder, output_folder, model_path, language, precision):
                     lab_used_count += 1
                     continue
 
-                # No .lab file - run Whisper STT
                 segments, info = model.transcribe(
                     audio=file_path,
                     beam_size=5,
@@ -195,7 +173,6 @@ def execute_asr(input_folder, output_folder, model_path, language, precision):
             f.write("\n".join(output))
             print(f"ASR 任务完成->标注文件路径: {output_file_path}\n")
 
-    # Model reference automatically released by context manager
     return output_file_path
 
 

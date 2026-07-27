@@ -1,23 +1,24 @@
-# Copyright (c) 2024 NVIDIA CORPORATION.
-#   Licensed under the MIT license.
+"""Fused CUDA anti-aliased activation (Activation1d).
+
+Copyright (c) 2024 NVIDIA CORPORATION. Licensed under the MIT license
+(LICENSE is in incl_licenses directory).
+
+FusedAntiAliasActivation assumes filter size 12, replication padding on
+upsampling/downsampling, and logscale alpha/beta parameters; hyperparameters are
+hard-coded in the kernel for speed and the fused kernel is incorrect for
+Activation1d with different hyperparameters.
+"""
 
 import torch
 import torch.nn as nn
 from alias_free_activation.torch.resample import UpSample1d, DownSample1d
 
-# load fused CUDA kernel: this enables importing anti_alias_activation_cuda
 from alias_free_activation.cuda import load
 
 anti_alias_activation_cuda = load.load()
 
 
 class FusedAntiAliasActivation(torch.autograd.Function):
-    """
-    Assumes filter size 12, replication padding on upsampling/downsampling, and logscale alpha/beta parameters as inputs.
-    The hyperparameters are hard-coded in the kernel to maximize speed.
-    NOTE: The fused kenrel is incorrect for Activation1d with different hyperparameters.
-    """
-
     @staticmethod
     def forward(ctx, inputs, up_ftr, down_ftr, alpha, beta):
         activation_results = anti_alias_activation_cuda.forward(inputs, up_ftr, down_ftr, alpha, beta)
@@ -47,7 +48,7 @@ class Activation1d(nn.Module):
         self.upsample = UpSample1d(up_ratio, up_kernel_size)
         self.downsample = DownSample1d(down_ratio, down_kernel_size)
 
-        self.fused = fused  # Whether to use fused CUDA kernel or not
+        self.fused = fused
 
     def forward(self, x):
         if not self.fused:
@@ -57,11 +58,11 @@ class Activation1d(nn.Module):
             return x
         else:
             if self.act.__class__.__name__ == "Snake":
-                beta = self.act.alpha.data  # Snake uses same params for alpha and beta
+                beta = self.act.alpha.data
             else:
-                beta = self.act.beta.data  # Snakebeta uses different params for alpha and beta
+                beta = self.act.beta.data
             alpha = self.act.alpha.data
-            if not self.act.alpha_logscale:  # Exp baked into cuda kernel, cancel it out with a log
+            if not self.act.alpha_logscale:
                 alpha = torch.log(alpha)
                 beta = torch.log(beta)
 

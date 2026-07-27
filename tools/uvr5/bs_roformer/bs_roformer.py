@@ -1,3 +1,5 @@
+"""BS-Roformer source-separation model. forward uses einops notation: b batch, f freq, t time, s audio channel (1 mono / 2 stereo), n stems, c complex (2), d feature dimension."""
+
 from functools import partial
 
 import torch
@@ -9,15 +11,11 @@ from bs_roformer.attend import Attend
 from torch.utils.checkpoint import checkpoint
 
 from typing import Tuple, Optional, Callable
-# from beartype.typing import Tuple, Optional, List, Callable
-# from beartype import beartype
 
 from rotary_embedding_torch import RotaryEmbedding
 
 from einops import rearrange, pack, unpack
 from einops.layers.torch import Rearrange
-
-# helper functions
 
 
 def exists(val):
@@ -36,9 +34,6 @@ def unpack_one(t, ps, pattern):
     return unpack(t, ps, pattern)[0]
 
 
-# norm
-
-
 def l2norm(t):
     return F.normalize(t, dim=-1, p=2)
 
@@ -51,9 +46,6 @@ class RMSNorm(Module):
 
     def forward(self, x):
         return F.normalize(x, dim=-1) * self.scale * self.gamma
-
-
-# attention
 
 
 class FeedForward(Module):
@@ -110,11 +102,6 @@ class Attention(Module):
 
 
 class LinearAttention(Module):
-    """
-    this flavor of linear attention proposed in https://arxiv.org/abs/2106.09681 by El-Nouby et al.
-    """
-
-    # @beartype
     def __init__(self, *, dim, dim_head=32, heads=8, scale=8, flash=False, dropout=0.0):
         super().__init__()
         dim_inner = dim_head * heads
@@ -187,11 +174,7 @@ class Transformer(Module):
         return self.norm(x)
 
 
-# bandsplit module
-
-
 class BandSplit(Module):
-    # @beartype
     def __init__(self, dim, dim_inputs: Tuple[int, ...]):
         super().__init__()
         self.dim_inputs = dim_inputs
@@ -233,7 +216,6 @@ def MLP(dim_in, dim_out, dim_hidden=None, depth=1, activation=nn.Tanh):
 
 
 class MaskEstimator(Module):
-    # @beartype
     def __init__(self, dim, dim_inputs: Tuple[int, ...], depth, mlp_expansion_factor=4):
         super().__init__()
         self.dim_inputs = dim_inputs
@@ -258,8 +240,6 @@ class MaskEstimator(Module):
 
         return torch.cat(outs, dim=-1)
 
-
-# main class
 
 DEFAULT_FREQS_PER_BANDS = (
     2,
@@ -328,7 +308,6 @@ DEFAULT_FREQS_PER_BANDS = (
 
 
 class BSRoformer(Module):
-    # @beartype
     def __init__(
         self,
         dim,
@@ -340,7 +319,6 @@ class BSRoformer(Module):
         freq_transformer_depth=2,
         linear_transformer_depth=0,
         freqs_per_bands: Tuple[int, ...] = DEFAULT_FREQS_PER_BANDS,
-        # in the paper, they divide into ~60 bands, test with 1 for starters
         dim_head=64,
         heads=8,
         attn_dropout=0.0,
@@ -349,7 +327,6 @@ class BSRoformer(Module):
         dim_freqs_in=1025,
         stft_n_fft=2048,
         stft_hop_length=512,
-        # 10ms at 44100Hz, from sections 4.1, 4.4 in the paper - @faroit recommends // 2 or // 4 for better reconstruction
         stft_win_length=2048,
         stft_normalized=False,
         stft_window_fn: Optional[Callable] = None,
@@ -431,8 +408,6 @@ class BSRoformer(Module):
 
             self.mask_estimators.append(mask_estimator)
 
-        # for the multi-resolution stft loss
-
         self.multi_stft_resolution_loss_weight = multi_stft_resolution_loss_weight
         self.multi_stft_resolutions_window_sizes = multi_stft_resolutions_window_sizes
         self.multi_stft_n_fft = stft_n_fft
@@ -441,21 +416,8 @@ class BSRoformer(Module):
         self.multi_stft_kwargs = dict(hop_length=multi_stft_hop_size, normalized=multi_stft_normalized)
 
     def forward(self, raw_audio, target=None, return_loss_breakdown=False):
-        """
-        einops
-
-        b - batch
-        f - freq
-        t - time
-        s - audio channel (1 for mono, 2 for stereo)
-        n - number of 'stems'
-        c - complex (2)
-        d - feature dimension
-        """
-
         device = raw_audio.device
 
-        # defining whether model is loaded on MPS (MacOS GPU accelerator)
         x_is_mps = True if device.type == "mps" else False
 
         if raw_audio.ndim == 2:
@@ -466,14 +428,10 @@ class BSRoformer(Module):
             "stereo needs to be set to True if passing in audio signal that is stereo (channel dimension of 2). also need to be False if mono (channel dimension of 1)"
         )
 
-        # to stft
-
         raw_audio, batch_audio_channel_packed_shape = pack_one(raw_audio, "* t")
 
         stft_window = self.stft_window_fn(device=device)
 
-        # RuntimeError: FFT operations are only supported on MacOS 14+
-        # Since it's tedious to define whether we're on correct MacOS version - simple try-catch is used
         try:
             stft_repr = torch.stft(raw_audio, **self.stft_kwargs, window=stft_window, return_complex=True)
         except:
@@ -488,7 +446,6 @@ class BSRoformer(Module):
 
         stft_repr = unpack_one(stft_repr, batch_audio_channel_packed_shape, "* f t c")
 
-        # merge stereo / mono into the frequency, with frequency leading dimension, for band splitting
         stft_repr = rearrange(stft_repr, "b s f t c -> b (f s) t c")
 
         x = rearrange(stft_repr, "b f t c -> b t (f c)")
@@ -497,8 +454,6 @@ class BSRoformer(Module):
             x = checkpoint(self.band_split, x, use_reentrant=False)
         else:
             x = self.band_split(x)
-
-        # axial / hierarchical attention
 
         store = [None] * len(self.layers)
         for i, transformer_block in enumerate(self.layers):
@@ -515,7 +470,6 @@ class BSRoformer(Module):
                 time_transformer, freq_transformer = transformer_block
 
             if self.skip_connection:
-                # Sum all previous
                 for j in range(i):
                     x = x + store[j]
 
@@ -551,22 +505,15 @@ class BSRoformer(Module):
             mask = torch.stack([fn(x) for fn in self.mask_estimators], dim=1)
         mask = rearrange(mask, "b n t (f c) -> b n f t c", c=2)
 
-        # modulate frequency representation
-
         stft_repr = rearrange(stft_repr, "b f t c -> b 1 f t c")
-
-        # complex number multiplication
 
         stft_repr = torch.view_as_complex(stft_repr)
         mask = torch.view_as_complex(mask)
 
         stft_repr = stft_repr * mask
 
-        # istft
-
         stft_repr = rearrange(stft_repr, "b n (f s) t -> (b n s) f t", s=self.audio_channels)
 
-        # same as torch.stft() fix for MacOS MPS above
         try:
             recon_audio = torch.istft(
                 stft_repr, **self.stft_kwargs, window=stft_window, return_complex=False, length=raw_audio.shape[-1]
@@ -585,8 +532,6 @@ class BSRoformer(Module):
         if num_stems == 1:
             recon_audio = rearrange(recon_audio, "b 1 s t -> b s t")
 
-        # if a target is passed in, calculate loss for learning
-
         if not exists(target):
             return recon_audio
 
@@ -596,7 +541,7 @@ class BSRoformer(Module):
         if target.ndim == 2:
             target = rearrange(target, "... t -> ... 1 t")
 
-        target = target[..., : recon_audio.shape[-1]]  # protect against lost length on istft
+        target = target[..., : recon_audio.shape[-1]]
 
         loss = F.l1_loss(recon_audio, target)
 
@@ -604,7 +549,7 @@ class BSRoformer(Module):
 
         for window_size in self.multi_stft_resolutions_window_sizes:
             res_stft_kwargs = dict(
-                n_fft=max(window_size, self.multi_stft_n_fft),  # not sure what n_fft is across multi resolution stft
+                n_fft=max(window_size, self.multi_stft_n_fft),
                 win_length=window_size,
                 return_complex=True,
                 window=self.multi_stft_window_fn(window_size, device=device),

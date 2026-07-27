@@ -23,11 +23,8 @@ import logging
 jieba_fast.setLogLevel(logging.CRITICAL)
 import jieba_fast.posseg as psg
 
-# is_g2pw_str = os.environ.get("is_g2pw", "True")##默认开启
-# is_g2pw = False#True if is_g2pw_str.lower() == 'true' else False
-is_g2pw = True  # True if is_g2pw_str.lower() == 'true' else False
+is_g2pw = True
 if is_g2pw:
-    # print("当前使用g2pw进行拼音推理")
     from text.g2pw import G2PWPinyin, correct_pronunciation
 
     parent_directory = os.path.dirname(current_file_path)
@@ -140,25 +137,18 @@ not_erhua = {
 
 
 def _merge_erhua(initials: list[str], finals: list[str], word: str, pos: str) -> list[list[str]]:
-    """
-    Do erhub.
-    """
-    # fix er1
     for i, phn in enumerate(finals):
         if i == len(finals) - 1 and word[i] == "儿" and phn == "er1":
             finals[i] = "er2"
 
-    # 发音
     if word not in must_erhua and (word in not_erhua or pos in {"a", "j", "nr"}):
         return initials, finals
 
-    # "……" 等情况直接返回
     if len(finals) != len(word):
         return initials, finals
 
     assert len(finals) == len(word)
 
-    # 与前一个字发同音
     new_initials = []
     new_finals = []
     for i, phn in enumerate(finals):
@@ -182,7 +172,6 @@ def _g2p(segments):
     word2ph = []
     for seg in segments:
         pinyins = []
-        # Replace all English words in the sentence
         seg = re.sub("[a-zA-Z]+", "", seg)
         seg_cut = psg.lcut(seg)
         seg_cut = tone_modifier.pre_merge_for_modify(seg_cut)
@@ -195,16 +184,13 @@ def _g2p(segments):
                     continue
                 sub_initials, sub_finals = _get_initials_finals(word)
                 sub_finals = tone_modifier.modified_tone(word, pos, sub_finals)
-                # 儿化
                 sub_initials, sub_finals = _merge_erhua(sub_initials, sub_finals, word, pos)
                 initials.append(sub_initials)
                 finals.append(sub_finals)
-                # assert len(sub_initials) == len(sub_finals) == len(word)
             initials = sum(initials, [])
             finals = sum(finals, [])
             print("pypinyin结果", initials, finals)
         else:
-            # g2pw采用整句推理
             pinyins = g2pw.lazy_pinyin(seg, neutral_tone_with_five=True, style=Style.TONE3)
 
             pre_word_length = 0
@@ -219,7 +205,6 @@ def _g2p(segments):
 
                 word_pinyins = pinyins[pre_word_length:now_word_length]
 
-                # 多音字消歧
                 word_pinyins = correct_pronunciation(word, word_pinyins)
 
                 for pinyin in word_pinyins:
@@ -232,19 +217,15 @@ def _g2p(segments):
 
                 pre_word_length = now_word_length
                 sub_finals = tone_modifier.modified_tone(word, pos, sub_finals)
-                # 儿化
                 sub_initials, sub_finals = _merge_erhua(sub_initials, sub_finals, word, pos)
                 initials.append(sub_initials)
                 finals.append(sub_finals)
 
             initials = sum(initials, [])
             finals = sum(finals, [])
-            # print("g2pw结果",initials,finals)
 
         for c, v in zip(initials, finals):
             raw_pinyin = c + v
-            # NOTE: post process for pypinyin outputs
-            # we discriminate i, ii and iii
             if c == v:
                 assert c in punctuation
                 phone = [c]
@@ -257,7 +238,6 @@ def _g2p(segments):
                 assert tone in "12345"
 
                 if c:
-                    # 多音节
                     v_rep_map = {
                         "uei": "ui",
                         "iou": "iu",
@@ -266,7 +246,6 @@ def _g2p(segments):
                     if v_without_tone in v_rep_map.keys():
                         pinyin = c + v_rep_map[v_without_tone]
                 else:
-                    # 单音节
                     pinyin_rep_map = {
                         "ing": "ying",
                         "i": "yi",
@@ -314,14 +293,12 @@ def replace_consecutive_punctuation(text):
 
 
 def text_normalize(text):
-    # https://github.com/PaddlePaddle/PaddleSpeech/tree/develop/paddlespeech/t2s/frontend/zh_normalization
     tx = TextNormalizer()
     sentences = tx.normalize(text)
     dest_text = ""
     for sentence in sentences:
         dest_text += replace_punctuation(sentence)
 
-    # 避免重复标点引起的参考泄露
     dest_text = replace_consecutive_punctuation(dest_text)
     return dest_text
 
@@ -332,8 +309,3 @@ if __name__ == "__main__":
     text = "你好"
     text = text_normalize(text)
     print(g2p(text))
-
-
-# # 示例用法
-# text = "这是一个示例文本：,你好！这是一个测试..."
-# print(g2p_paddle(text))  # 输出: 这是一个示例文本你好这是一个测试

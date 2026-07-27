@@ -1,5 +1,4 @@
-# Adapted from https://github.com/junjun3518/alias-free-torch under the Apache License 2.0
-#   LICENSE is in incl_licenses directory.
+"""Adapted from https://github.com/junjun3518/alias-free-torch under the Apache License 2.0 (LICENSE is in incl_licenses directory)."""
 
 import torch.nn as nn
 from .resample import UpSample1d, DownSample1d
@@ -21,7 +20,6 @@ class Activation1d(nn.Module):
         self.upsample = UpSample1d(up_ratio, up_kernel_size)
         self.downsample = DownSample1d(down_ratio, down_kernel_size)
 
-    # x: [B,C,T]
     def forward(self, x):
         x = self.upsample(x)
         x = self.act(x)

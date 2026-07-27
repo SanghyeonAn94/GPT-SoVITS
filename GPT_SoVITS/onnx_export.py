@@ -101,22 +101,18 @@ class T2SModel(nn.Module):
         self.onnx_encoder = T2SEncoder(self.t2s_model, self.vits_model)
         self.first_stage_decoder = self.t2s_model.first_stage_decoder
         self.stage_decoder = self.t2s_model.stage_decoder
-        # self.t2s_model = torch.jit.script(self.t2s_model)
 
     def forward(self, ref_seq, text_seq, ref_bert, text_bert, ssl_content):
         early_stop_num = self.t2s_model.early_stop_num
 
-        # [1,N] [1,N] [N, 1024] [N, 1024] [1, 768, N]
         x, prompts = self.onnx_encoder(ref_seq, text_seq, ref_bert, text_bert, ssl_content)
 
         prefix_len = prompts.shape[1]
 
-        # [1,N,512] [1,N]
         y, k, v, y_emb, x_example = self.first_stage_decoder(x, prompts)
 
         stop = False
         for idx in range(1, 1500):
-            # [1, N] [N_layer, N, 1, 512] [N_layer, N, 1, 512] [1, N, 512] [1] [1, N, 512] [1, N]
             enco = self.stage_decoder(y, k, v, y_emb, x_example)
             y, k, v, y_emb, logits, samples = enco
             if early_stop_num != -1 and (y.shape[1] - prefix_len) > early_stop_num:
@@ -130,7 +126,6 @@ class T2SModel(nn.Module):
         return y[:, -idx:].unsqueeze(0)
 
     def export(self, ref_seq, text_seq, ref_bert, text_bert, ssl_content, project_name, dynamo=False):
-        # self.onnx_encoder = torch.jit.script(self.onnx_encoder)
         if dynamo:
             export_options = torch.onnx.ExportOptions(dynamic_shapes=True)
             onnx_encoder_export_output = torch.onnx.dynamo_export(
@@ -337,7 +332,6 @@ def export(vits_path, gpt_path, project_name, vits_model="v2"):
     ref_bert = torch.randn((ref_seq.shape[1], 1024)).float()
     text_bert = torch.randn((text_seq.shape[1], 1024)).float()
     ref_audio = torch.randn((1, 48000 * 5)).float()
-    # ref_audio = torch.tensor([load_audio("rec.wav", 48000)]).float()
     ref_audio_16k = torchaudio.functional.resample(ref_audio, 48000, 16000).float()
     ref_audio_sr = torchaudio.functional.resample(ref_audio, 48000, vits.hps.data.sampling_rate).float()
 
@@ -348,10 +342,7 @@ def export(vits_path, gpt_path, project_name, vits_model="v2"):
 
     ssl_content = ssl(ref_audio_16k).float()
 
-    # debug = False
     debug = True
-
-    # gpt_sovits.export(ref_seq, text_seq, ref_bert, text_bert, ref_audio_sr, ssl_content, project_name)
 
     if debug:
         a, b = gpt_sovits(ref_seq, text_seq, ref_bert, text_bert, ref_audio_sr, ssl_content, debug=debug)
@@ -375,7 +366,6 @@ def export(vits_path, gpt_path, project_name, vits_model="v2"):
         "EmbeddingDim": gpt.t2s_model.embedding_dim,
         "Dict": "BasicDict",
         "BertPath": "chinese-roberta-wwm-ext-large",
-        # "Symbol": symbols,
         "AddBlank": False,
     }
 
@@ -394,5 +384,3 @@ if __name__ == "__main__":
     vits_path = "SoVITS_weights/nahida_e30_s3930.pth"
     exp_path = "nahida"
     export(vits_path, gpt_path, exp_path)
-
-    # soundfile.write("out.wav", a, vits.hps.data.sampling_rate)

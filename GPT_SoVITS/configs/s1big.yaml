@@ -16,7 +16,7 @@ data:
   max_eval_sample: 8
   max_sec: 54
   num_workers: 1
-  pad_val: 1024 # same with EOS in model
+  pad_val: 1024
 model:
   vocab_size: 1025
   phoneme_vocab_size: 512

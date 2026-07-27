@@ -45,9 +45,6 @@ import yaml
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Default follows the code instead of naming a fixed image path, so it stays
-# correct wherever the checkout is installed (/srv/gpt-sovits, /app/GPT-SoVITS,
-# a dev clone). app/train_handler.py -> parents[1] is the GPT-SoVITS repo root.
 _REPO_ROOT = str(pathlib.Path(__file__).resolve().parents[1])
 
 GPTSOVITS_BASE_DIR = os.environ.get("GPTSOVITS_BASE_DIR", _REPO_ROOT)
@@ -144,11 +141,6 @@ def _run_format_dataset(
     version: str,
     gpu_numbers: str,
 ) -> None:
-    """Replicate ``api_v2.execute_dataset_formatting`` in-process.
-
-    Runs the three preparation stages sequentially and merges the per-part
-    output files the same way the legacy endpoint did.
-    """
     _set_progress(stage="format_dataset", step=0)
     os.makedirs(exp_dir, exist_ok=True)
 
@@ -266,7 +258,6 @@ def _run_format_dataset(
 
 
 def _pretrained_s2g_for_version(version: str) -> str:
-    """Return the repo-relative pretrained S2G path for a training version."""
     table = {
         "v1": "GPT_SoVITS/pretrained_models/s2G488k.pth",
         "v2": "GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/s2G2333k.pth",
@@ -464,7 +455,6 @@ def _send_callback(url: str, payload: Dict[str, Any]) -> None:
 
 
 def _train(event: Dict[str, Any], inp: Dict[str, Any]) -> Dict[str, Any]:
-    """Run the complete GPT-SoVITS training pipeline."""
     job_id = uuid.uuid4().hex[:8]
     character_id = inp.get("character_id") or ""
     character_name = inp.get("character_name") or ""

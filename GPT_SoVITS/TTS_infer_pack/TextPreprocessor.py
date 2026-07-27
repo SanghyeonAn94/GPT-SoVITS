@@ -1,3 +1,13 @@
+"""
+Text preprocessing for the TTS inference pipeline: language segmentation,
+normalization, cleaning to phonemes, and BERT feature extraction.
+
+replace_consecutive_punctuation normalizes runs of punctuation to at most
+max_n characters (reusing existing ',' '.' symbols without vocab expansion),
+so consecutive punctuation splits into individual phonemes and GPT can learn
+longer pauses through repeated punctuation embeddings.
+"""
+
 import os
 import sys
 import threading
@@ -95,16 +105,13 @@ class TextPreprocessor:
         texts = []
 
         for text in _texts:
-            # 解决输入目标文本的空行导致报错的问题
             if len(text.strip()) == 0:
                 continue
             if not re.sub("\W+", "", text):
-                # 检测一下，如果是纯符号，就跳过。
                 continue
             if text[-1] not in splits:
                 text += "。" if lang != "en" else "."
 
-            # 解决句子过长导致Bert报错的问题
             if len(text) > 510:
                 texts.extend(split_big_text(text))
             else:
@@ -164,11 +171,8 @@ class TextPreprocessor:
                     if tmp["lang"] == "en":
                         langlist.append(tmp["lang"])
                     else:
-                        # 因无法区别中日韩文汉字,以用户输入为准
                         langlist.append(language)
                     textlist.append(tmp["text"])
-            # print(textlist)
-            # print(langlist)
             phones_list = []
             bert_list = []
             norm_text_list = []
@@ -233,39 +237,16 @@ class TextPreprocessor:
         return _text
 
     def replace_consecutive_punctuation(self, text, max_n=3):
-        """
-        Normalize consecutive punctuation (ceiling at max_n characters)
-
-        Rules:
-        - 1 occurrence: keep as-is
-        - 2 occurrences: keep as-is
-        - 3 occurrences: keep as-is
-        - 4+ occurrences: limit to 3
-
-        Examples:
-        - "..." → "..." (keep 3)
-        - "...." → "..." (limit to 3)
-        - ",," → ",," (keep 2)
-        - ",,,,," → ",,," (limit to 3)
-
-        Benefits:
-        - No vocab expansion needed (reuses existing ',' '.' symbols)
-        - Consecutive punctuation splits into individual phonemes: ",,," → [',', ',', ',']
-        - GPT can learn longer pauses through repeated punctuation embeddings
-        """
         def normalize_punct(match):
-            punct = match.group(1)  # punctuation type
-            count = len(match.group(0))  # consecutive count
+            punct = match.group(1)
+            count = len(match.group(0))
             normalized_count = min(count, max_n)
             return punct * normalized_count
 
-        # Commas: process consecutive (max 3)
         text = re.sub(r'(,){1,}', normalize_punct, text)
 
-        # Periods: process consecutive (max 3)
         text = re.sub(r'(\.){1,}', normalize_punct, text)
 
-        # Optional: handle exclamation marks and question marks similarly
         text = re.sub(r'(!){1,}', normalize_punct, text)
         text = re.sub(r'(\?){1,}', normalize_punct, text)
 

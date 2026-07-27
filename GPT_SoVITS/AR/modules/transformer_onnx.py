@@ -1,4 +1,16 @@
 # modified from https://github.com/lifeiteng/vall-e/blob/main/valle/modules/transformer.py
+"""ONNX-export variants of Transformer encoder modules.
+
+TransformerEncoder is a stack of N encoder layers; a BERT-style model can be
+built from TransformerEncoderLayer instances with corresponding parameters.
+AdaptiveLayerNorm provides adaptive layer normalization.
+
+Example::
+    >>> encoder_layer = TransformerEncoderLayer(d_model=512, nhead=8)
+    >>> transformer_encoder = TransformerEncoder(encoder_layer, num_layers=6)
+    >>> src = torch.rand(10, 32, 512)
+    >>> out = transformer_encoder(src)
+"""
 import copy
 import numbers
 from functools import partial
@@ -36,7 +48,6 @@ class LayerNorm(nn.Module):
         factory_kwargs = {"device": device, "dtype": dtype}
         super(LayerNorm, self).__init__()
         if isinstance(normalized_shape, numbers.Integral):
-            # mypy error: incompatible types in assignment
             normalized_shape = (normalized_shape,)  # type: ignore[assignment]
         self.normalized_shape = tuple(normalized_shape)  # type: ignore[arg-type]
         self.eps = eps
@@ -95,24 +106,6 @@ class IdentityNorm(nn.Module):
 
 
 class TransformerEncoder(nn.Module):
-    r"""TransformerEncoder is a stack of N encoder layers. Users can build the
-    BERT(https://arxiv.org/abs/1810.04805) model with corresponding parameters.
-
-    Args:
-        encoder_layer: an instance of the TransformerEncoderLayer() class (required).
-        num_layers: the number of sub-encoder-layers in the encoder (required).
-        norm: the layer normalization component (optional).
-        enable_nested_tensor: if True, input will automatically convert to nested tensor
-            (and convert back on output). This will improve the overall performance of
-            TransformerEncoder when padding rate is high. Default: ``True`` (enabled).
-
-    Examples::
-        >>> encoder_layer = TransformerEncoderLayer(d_model=512, nhead=8)
-        >>> transformer_encoder = TransformerEncoder(encoder_layer, num_layers=6)
-        >>> src = torch.rand(10, 32, 512)
-        >>> out = transformer_encoder(src)
-    """
-
     __constants__ = ["norm"]
 
     def __init__(self, encoder_layer, num_layers, norm=None):
@@ -169,7 +162,7 @@ class TransformerEncoderLayer(nn.Module):
         factory_kwargs = {"device": device, "dtype": dtype}
         super(TransformerEncoderLayer, self).__init__()
         self.self_attn = MultiheadAttention(
-            d_model,  # 512 16
+            d_model,
             nhead,
             dropout=dropout,
             batch_first=batch_first,
@@ -250,8 +243,6 @@ class TransformerEncoderLayer(nn.Module):
 
 
 class AdaptiveLayerNorm(nn.Module):
-    r"""Adaptive Layer Normalization"""
-
     def __init__(self, d_model, norm) -> None:
         super(AdaptiveLayerNorm, self).__init__()
         self.project_layer = nn.Linear(d_model, 2 * d_model)

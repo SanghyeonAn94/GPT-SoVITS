@@ -45,9 +45,6 @@ import soundfile as sf
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Default follows the code instead of naming a fixed image path, so it stays
-# correct wherever the checkout is installed (/srv/gpt-sovits, /app/GPT-SoVITS,
-# a dev clone). app/handler.py -> parents[1] is the GPT-SoVITS repo root.
 _REPO_ROOT = str(pathlib.Path(__file__).resolve().parents[1])
 
 GPTSOVITS_BASE_DIR = os.environ.get("GPTSOVITS_BASE_DIR", _REPO_ROOT)
@@ -86,7 +83,6 @@ _loaded_sovits_uri: Optional[str] = None
 
 
 def _ensure_character_weights(gpt_uri: Optional[str], sovits_uri: Optional[str]) -> None:
-    """Swap GPT / SoVITS weights if the requested URIs differ from the loaded set."""
     global _loaded_gpt_uri, _loaded_sovits_uri
     if gpt_uri and gpt_uri != _loaded_gpt_uri:
         local = s3_utils.download_to_temp(gpt_uri, suffix=".ckpt")
@@ -107,16 +103,6 @@ def _encode_wav_base64(audio: np.ndarray, sample_rate: int) -> str:
 
 
 def _action_tts(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Synthesize speech from ``text`` with optional character weights hot-swap.
-
-    Required: ``text``, ``text_lang``, ``ref_audio`` (``s3://``).
-    Optional: ``ref_text``/``prompt_text``, ``prompt_lang``, ``aux_ref_audios``
-    (list of ``s3://``), ``gpt_weights``/``sovits_weights`` (``s3://``),
-    ``temperature``, ``top_k``, ``top_p``, ``text_split_method``, ``batch_size``,
-    ``split_bucket``, ``speed_factor``, ``fragment_interval``, ``seed``,
-    ``parallel_infer``, ``repetition_penalty``, ``sample_steps``,
-    ``super_sampling``, ``n_samples``.
-    """
     _ensure_character_weights(payload.get("gpt_weights"), payload.get("sovits_weights"))
 
     ref_audio = payload.get("ref_audio")
@@ -187,13 +173,6 @@ def _action_tts(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _action_speech_slicing(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Slice every wav file under ``input_s3_prefix`` and upload results.
-
-    Required: ``input_s3_prefix``, ``output_s3_prefix``.
-    Optional slicing knobs match ``tools/slice_audio.py``: ``threshold``,
-    ``min_length``, ``min_interval``, ``hop_size``, ``max_sil_kept``, ``_max``,
-    ``alpha``, ``n_parts``.
-    """
     input_s3 = payload.get("input_s3_prefix")
     output_s3 = payload.get("output_s3_prefix")
     if not input_s3 or not output_s3:
@@ -251,14 +230,6 @@ def _action_speech_slicing(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _action_stt(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Transcribe every wav file under ``input_s3_prefix`` with faster-whisper.
-
-    Required: ``input_s3_prefix``. Optional: ``language`` (default ``auto``),
-    ``precision`` (default ``float16``).
-
-    The underlying ``execute_asr`` writes a ``|``-separated ``.list`` file; we
-    parse it so callers receive structured entries instead of a local path.
-    """
     input_s3 = payload.get("input_s3_prefix")
     if not input_s3:
         return {"error": "input_s3_prefix is required"}
@@ -319,12 +290,6 @@ def _action_stt(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _action_uvr5_separate(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Separate vocal/instrumental from ``input_audio`` via UVR5.
-
-    Required: ``input_audio`` (``s3://`` URI), ``output_s3_prefix``.
-    Optional: ``model_name`` (default ``HP5_only_main_vocal``), ``agg``
-    (default ``10``), ``output_format`` (default ``wav``).
-    """
     input_audio = payload.get("input_audio")
     output_s3 = payload.get("output_s3_prefix")
     if not input_audio or not output_s3:
@@ -442,7 +407,6 @@ def _action_uvr5_separate(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _action_uvr5_models(_payload: Dict[str, Any]) -> Dict[str, Any]:
-    """List UVR5 models shipped on the Network Volume (no audio I/O)."""
     weights_dir = s3_utils.ensure_local(
         os.environ.get(
             "GPTSOVITS_UVR5_WEIGHTS",
@@ -469,7 +433,6 @@ _ACTIONS = {
 
 
 def handler(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Entry point for the RunPod Serverless worker."""
     inp = event.get("input") or {}
     action = inp.get("action")
     if action not in _ACTIONS:

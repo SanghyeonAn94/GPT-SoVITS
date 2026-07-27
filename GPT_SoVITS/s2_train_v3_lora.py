@@ -40,14 +40,12 @@ from process_ckpt import savee
 
 torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.deterministic = False
-###反正A100fp32更快，那试试tf32吧
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
-torch.set_float32_matmul_precision("medium")  # 最低精度但最快（也就快一丁点），对于结果造成不了影响
-# from config import pretrained_s2G,pretrained_s2D
+torch.set_float32_matmul_precision("medium")
 global_step = 0
 
-device = "cpu"  # cuda以外的设备，等mps优化后加入
+device = "cpu"
 
 
 def main():
@@ -73,7 +71,6 @@ def run(rank, n_gpus, hps):
     if rank == 0:
         logger = utils.get_logger(hps.data.exp_dir)
         logger.info(hps)
-        # utils.check_git_hash(hps.s2_ckpt_dir)
         writer = SummaryWriter(log_dir=hps.s2_ckpt_dir)
         writer_eval = SummaryWriter(log_dir=os.path.join(hps.s2_ckpt_dir, "eval"))
 
@@ -89,7 +86,7 @@ def run(rank, n_gpus, hps):
 
     TextAudioSpeakerLoader = TextAudioSpeakerLoaderV3 if hps.model.version == "v3" else TextAudioSpeakerLoaderV4
     TextAudioSpeakerCollate = TextAudioSpeakerCollateV3 if hps.model.version == "v3" else TextAudioSpeakerCollateV4
-    train_dataset = TextAudioSpeakerLoader(hps.data)  ########
+    train_dataset = TextAudioSpeakerLoader(hps.data)
     train_sampler = DistributedBucketSampler(
         train_dataset,
         hps.train.batch_size,
@@ -103,15 +100,6 @@ def run(rank, n_gpus, hps):
             800,
             900,
             1000,
-            # 1100,
-            # 1200,
-            # 1300,
-            # 1400,
-            # 1500,
-            # 1600,
-            # 1700,
-            # 1800,
-            # 1900,
         ],
         num_replicas=n_gpus,
         rank=rank,
@@ -148,7 +136,7 @@ def run(rank, n_gpus, hps):
 
     def get_optim(net_g):
         return torch.optim.AdamW(
-            filter(lambda p: p.requires_grad, net_g.parameters()),  ###默认所有层lr一致
+            filter(lambda p: p.requires_grad, net_g.parameters()),
             hps.train.learning_rate,
             betas=hps.train.betas,
             eps=hps.train.eps,
@@ -161,12 +149,11 @@ def run(rank, n_gpus, hps):
             net_g = net_g.to(device)
         return net_g
 
-    try:  # 如果能加载自动resume
+    try:
         net_g = get_model(hps)
         net_g.cfm = get_peft_model(net_g.cfm, lora_config)
         net_g = model2cuda(net_g, rank)
         optim_g = get_optim(net_g)
-        # _, _, _, epoch_str = utils.load_checkpoint(utils.latest_checkpoint_path(hps.model_dir, "G_*.pth"), net_g, optim_g,load_opt=0)
         _, _, _, epoch_str = utils.load_checkpoint(
             utils.latest_checkpoint_path(save_root, "G_*.pth"),
             net_g,
@@ -174,8 +161,7 @@ def run(rank, n_gpus, hps):
         )
         epoch_str += 1
         global_step = (epoch_str - 1) * len(train_loader)
-    except:  # 如果首次不能加载，加载pretrain
-        # traceback.print_exc()
+    except:
         epoch_str = 1
         global_step = 0
         net_g = get_model(hps)
@@ -201,9 +187,6 @@ def run(rank, n_gpus, hps):
     for name, param in net_g.named_parameters():
         if not param.requires_grad:
             no_grad_names.add(name.replace("module.", ""))
-            # print(name, "not requires_grad")
-    # print(no_grad_names)
-    # os._exit(233333)
 
     scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=hps.train.lr_decay, last_epoch=-1)
     for _ in range(epoch_str):
@@ -223,7 +206,6 @@ def run(rank, n_gpus, hps):
                 [optim_g, optim_d],
                 [scheduler_g, scheduler_d],
                 scaler,
-                # [train_loader, eval_loader], logger, [writer, writer_eval])
                 [train_loader, None],
                 logger,
                 [writer, writer_eval],
@@ -248,7 +230,6 @@ def run(rank, n_gpus, hps):
 def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loaders, logger, writers):
     net_g, net_d = nets
     optim_g, optim_d = optims
-    # scheduler_g, scheduler_d = schedulers
     train_loader, eval_loader = loaders
     if writers is not None:
         writer, writer_eval = writers
@@ -350,8 +331,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 ckpt = net_g.state_dict()
             sim_ckpt = od()
             for key in ckpt:
-                # if "cfm"not in key:
-                #     print(key)
                 if key not in no_grad_names:
                     sim_ckpt[key] = ckpt[key].half().cpu()
             logger.info(

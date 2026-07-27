@@ -10,9 +10,8 @@ import psutil
 import os
 
 def set_high_priority():
-    """把当前 Python 进程设为 HIGH_PRIORITY_CLASS"""
     if os.name != "nt":
-        return # 仅 Windows 有效
+        return
     p = psutil.Process(os.getpid())
     try:
         p.nice(psutil.HIGH_PRIORITY_CLASS)
@@ -68,38 +67,33 @@ language = sys.argv[-1] if sys.argv[-1] in scan_language_list() else language
 i18n = I18nAuto(language=language)
 
 
-# os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'  # 确保直接启动推理UI时也能够设置。
 
 if torch.cuda.is_available():
     device = "cuda"
-# elif torch.backends.mps.is_available():
-#     device = "mps"
 else:
     device = "cpu"
 
-# is_half = False
-# device = "cpu"
 
 dict_language_v1 = {
-    i18n("中文"): "all_zh",  # 全部按中文识别
-    i18n("英文"): "en",  # 全部按英文识别#######不变
-    i18n("日文"): "all_ja",  # 全部按日文识别
-    i18n("中英混合"): "zh",  # 按中英混合识别####不变
-    i18n("日英混合"): "ja",  # 按日英混合识别####不变
-    i18n("多语种混合"): "auto",  # 多语种启动切分识别语种
+    i18n("中文"): "all_zh",
+    i18n("英文"): "en",
+    i18n("日文"): "all_ja",
+    i18n("中英混合"): "zh",
+    i18n("日英混合"): "ja",
+    i18n("多语种混合"): "auto",
 }
 dict_language_v2 = {
-    i18n("中文"): "all_zh",  # 全部按中文识别
-    i18n("英文"): "en",  # 全部按英文识别#######不变
-    i18n("日文"): "all_ja",  # 全部按日文识别
-    i18n("粤语"): "all_yue",  # 全部按中文识别
-    i18n("韩文"): "all_ko",  # 全部按韩文识别
-    i18n("中英混合"): "zh",  # 按中英混合识别####不变
-    i18n("日英混合"): "ja",  # 按日英混合识别####不变
-    i18n("粤英混合"): "yue",  # 按粤英混合识别####不变
-    i18n("韩英混合"): "ko",  # 按韩英混合识别####不变
-    i18n("多语种混合"): "auto",  # 多语种启动切分识别语种
-    i18n("多语种混合(粤语)"): "auto_yue",  # 多语种启动切分识别语种
+    i18n("中文"): "all_zh",
+    i18n("英文"): "en",
+    i18n("日文"): "all_ja",
+    i18n("粤语"): "all_yue",
+    i18n("韩文"): "all_ko",
+    i18n("中英混合"): "zh",
+    i18n("日英混合"): "ja",
+    i18n("粤英混合"): "yue",
+    i18n("韩英混合"): "ko",
+    i18n("多语种混合"): "auto",
+    i18n("多语种混合(粤语)"): "auto_yue",
 }
 dict_language = dict_language_v1 if version == "v1" else dict_language_v2
 
@@ -125,7 +119,6 @@ is_exist_s2gv4 = os.path.exists(path_sovits_v4)
 tts_config = TTS_Config("GPT_SoVITS/configs/tts_infer.yaml")
 tts_config.device = device
 tts_config.is_half = is_half
-# tts_config.version = version
 tts_config.update_version(version)
 if gpt_path is not None:
     if "！" in gpt_path or "!" in gpt_path:
@@ -202,9 +195,7 @@ def inference(
 
 
 def custom_sort_key(s):
-    # 使用正则表达式提取字符串中的数字部分和非数字部分
     parts = re.split("(\d+)", s)
-    # 将数字部分转换为整数，非数字部分保持不变
     parts = [int(part) if part.isdigit() else part for part in parts]
     return parts
 
@@ -235,7 +226,6 @@ def change_sovits_weights(sovits_path, prompt_language=None, text_language=None)
         sovits_path = name2sovits_path[sovits_path]
     global version, model_version, dict_language, if_lora_v3
     version, model_version, if_lora_v3 = get_sovits_version_from_path_fast(sovits_path)
-    # print(sovits_path,version, model_version, if_lora_v3)
     is_exist = is_exist_s2gv3 if model_version == "v3" else is_exist_s2gv4
     path_sovits = path_sovits_v3 if model_version == "v3" else path_sovits_v4
     if if_lora_v3 == True and is_exist == False:
@@ -313,7 +303,6 @@ with gr.Blocks(title="GPT-SoVITS WebUI", analytics_enabled=False, js=js, css=css
     )
 
     with gr.Column():
-        # with gr.Group():
         gr.Markdown(value=i18n("模型切换"))
         with gr.Row():
             GPT_dropdown = gr.Dropdown(
@@ -476,7 +465,7 @@ with gr.Blocks(title="GPT-SoVITS WebUI", analytics_enabled=False, js=js, css=css
                 ref_text_free,
                 inference_button,
             ],
-        )  #
+        )
         GPT_dropdown.change(change_gpt_weights, [GPT_dropdown], [])
 
     with gr.Group():
@@ -514,10 +503,9 @@ with gr.Blocks(title="GPT-SoVITS WebUI", analytics_enabled=False, js=js, css=css
         gr.Markdown(value=i18n("后续将支持转音素、手工修改音素、语音合成分步执行。"))
 
 if __name__ == "__main__":
-    app.queue().launch(  # concurrency_count=511, max_size=1022
+    app.queue().launch(
         server_name="0.0.0.0",
         inbrowser=True,
         share=is_share,
         server_port=infer_ttswebui,
-        # quiet=True,
     )

@@ -1,3 +1,5 @@
+"""Common helper functions for VITS modules (weight init, padding, masking, path generation)."""
+
 import math
 import torch
 from torch.nn import functional as F
@@ -13,12 +15,6 @@ def get_padding(kernel_size, dilation=1):
     return int((kernel_size * dilation - dilation) / 2)
 
 
-# def convert_pad_shape(pad_shape):
-#     l = pad_shape[::-1]
-#     pad_shape = [item for sublist in l for item in sublist]
-#     return pad_shape
-
-
 def intersperse(lst, item):
     result = [item] * (len(lst) * 2 + 1)
     result[1::2] = lst
@@ -26,14 +22,12 @@ def intersperse(lst, item):
 
 
 def kl_divergence(m_p, logs_p, m_q, logs_q):
-    """KL(P||Q)"""
     kl = (logs_q - logs_p) - 0.5
     kl += 0.5 * (torch.exp(2.0 * logs_p) + ((m_p - m_q) ** 2)) * torch.exp(-2.0 * logs_q)
     return kl
 
 
 def rand_gumbel(shape):
-    """Sample from the Gumbel distribution, protect from overflows."""
     uniform_samples = torch.rand(shape) * 0.99998 + 0.00001
     return -torch.log(-torch.log(uniform_samples))
 
@@ -122,10 +116,6 @@ def sequence_mask(length, max_length=None):
 
 
 def generate_path(duration, mask):
-    """
-    duration: [b, 1, t_x]
-    mask: [b, 1, t_y, t_x]
-    """
     device = duration.device
 
     b, _, t_y, t_x = mask.shape

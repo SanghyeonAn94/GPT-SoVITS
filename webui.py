@@ -41,7 +41,6 @@ for path in site.getsitepackages():
         site_packages_roots.append(path)
 if site_packages_roots == []:
     site_packages_roots = ["%s/runtime/Lib/site-packages" % now_dir]
-# os.environ["OPENBLAS_NUM_THREADS"] = "4"
 os.environ["no_proxy"] = "localhost, 127.0.0.1, ::1"
 os.environ["all_proxy"] = ""
 for site_packages_root in site_packages_roots:
@@ -49,7 +48,6 @@ for site_packages_root in site_packages_roots:
         try:
             with open("%s/users.pth" % (site_packages_root), "w") as f:
                 f.write(
-                    # "%s\n%s/runtime\n%s/tools\n%s/tools/asr\n%s/GPT_SoVITS\n%s/tools/uvr5"
                     "%s\n%s/GPT_SoVITS/BigVGAN\n%s/tools\n%s/tools/asr\n%s/GPT_SoVITS\n%s/tools/uvr5"
                     % (now_dir, now_dir, now_dir, now_dir, now_dir, now_dir)
                 )
@@ -89,7 +87,6 @@ from tools.my_utils import check_details, check_for_existance
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
-# os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1' # 当遇到mps不支持的步骤时使用cpu
 import gradio as gr
 
 n_cpu = cpu_count()
@@ -124,13 +121,13 @@ def set_default():
     if version not in v3v4set:
         default_sovits_epoch = 8
         default_sovits_save_every_epoch = 4
-        max_sovits_epoch = 25  # 40
-        max_sovits_save_every_epoch = 25  # 10
+        max_sovits_epoch = 25
+        max_sovits_save_every_epoch = 25
     else:
         default_sovits_epoch = 2
         default_sovits_save_every_epoch = 1
-        max_sovits_epoch = 16  # 40 # 3 #训太多=作死
-        max_sovits_save_every_epoch = 10  # 10 # 3
+        max_sovits_epoch = 16
+        max_sovits_save_every_epoch = 10
 
     default_batch_size = max(1, default_batch_size)
     default_batch_size_s1 = max(1, default_batch_size_s1)
@@ -143,7 +140,7 @@ gpus = "-".join(map(str, GPU_INDEX))
 default_gpu_numbers = infer_device.index
 
 
-def fix_gpu_number(input):  # 将越界的number强制改到界内
+def fix_gpu_number(input):
     try:
         if int(input) not in set_gpu_numbers:
             return default_gpu_numbers
@@ -213,18 +210,17 @@ def kill_proc_tree(pid, including_parent=True):
     try:
         parent = psutil.Process(pid)
     except psutil.NoSuchProcess:
-        # Process already terminated
         return
 
     children = parent.children(recursive=True)
     for child in children:
         try:
-            os.kill(child.pid, signal.SIGTERM)  # or signal.SIGKILL
+            os.kill(child.pid, signal.SIGTERM)
         except OSError:
             pass
     if including_parent:
         try:
-            os.kill(parent.pid, signal.SIGTERM)  # or signal.SIGKILL
+            os.kill(parent.pid, signal.SIGTERM)
         except OSError:
             pass
 
@@ -235,7 +231,6 @@ system = platform.system()
 def kill_process(pid, process_name=""):
     if system == "Windows":
         cmd = "taskkill /t /f /pid %s" % pid
-        # os.system(cmd)
         subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     else:
         kill_proc_tree(pid)
@@ -335,9 +330,6 @@ def change_tts_inference(bert_path, cnhubert_base_path, gpu_number, gpt_path, so
         cmd = '"%s" -s GPT_SoVITS/inference_webui_fast.py "%s"' % (python_exec, language)
     else:
         cmd = '"%s" -s GPT_SoVITS/inference_webui.py "%s"' % (python_exec, language)
-    # #####v3暂不支持加速推理
-    # if version=="v3":
-    #     cmd = '"%s" GPT_SoVITS/inference_webui.py "%s"'%(python_exec, language)
     if p_tts_inference is None:
         os.environ["gpt_path"] = gpt_path
         os.environ["sovits_path"] = sovits_path
@@ -626,14 +618,12 @@ def open1Bb(
         data["train_semantic_path"] = "%s/6-name2semantic.tsv" % s1_dir
         data["train_phoneme_path"] = "%s/2-name2text.txt" % s1_dir
         data["output_dir"] = "%s/logs_s1_%s" % (s1_dir, version)
-        # data["version"]=version
 
         os.environ["_CUDA_VISIBLE_DEVICES"] = str(fix_gpu_numbers(gpu_numbers.replace("-", ",")))
         os.environ["hz"] = "25hz"
         tmp_config_path = "%s/tmp_s1.yaml" % tmp
         with open(tmp_config_path, "w") as f:
             f.write(yaml.dump(data, default_flow_style=False))
-        # cmd = '"%s" GPT_SoVITS/s1_train.py --config_file "%s" --train_semantic_path "%s/6-name2semantic.tsv" --train_phoneme_path "%s/2-name2text.txt" --output_dir "%s/logs_s1"'%(python_exec,tmp_config_path,s1_dir,s1_dir,s1_dir)
         cmd = '"%s" -s GPT_SoVITS/s1_train.py --config_file "%s" ' % (python_exec, tmp_config_path)
         yield (
             process_info(process_name_gpt, "opened"),
@@ -1065,7 +1055,6 @@ def open1abc(
     if ps1abc == []:
         opt_dir = "%s/%s" % (exp_root, exp_name)
         try:
-            #############################1a
             path_text = "%s/2-name2text.txt" % opt_dir
             if os.path.exists(path_text) == False or (
                 os.path.exists(path_text) == True
@@ -1103,7 +1092,7 @@ def open1abc(
                     p.wait()
 
                 opt = []
-                for i_part in range(all_parts):  # txt_path="%s/2-name2text-%s.txt"%(opt_dir,i_part)
+                for i_part in range(all_parts):
                     txt_path = "%s/2-name2text-%s.txt" % (opt_dir, i_part)
                     with open(txt_path, "r", encoding="utf8") as f:
                         opt += f.read().strip("\n").split("\n")
@@ -1117,7 +1106,6 @@ def open1abc(
                 {"__type__": "update", "visible": True},
             )
             ps1abc = []
-            #############################1b
             config = {
                 "inp_text": inp_text,
                 "inp_wav_dir": inp_wav_dir,
@@ -1171,7 +1159,6 @@ def open1abc(
                 {"__type__": "update", "visible": False},
                 {"__type__": "update", "visible": True},
             )
-            #############################1c
             path_semantic = "%s/6-name2semantic.tsv" % opt_dir
             if os.path.exists(path_semantic) == False or (
                 os.path.exists(path_semantic) == True and os.path.getsize(path_semantic) < 31
@@ -1288,7 +1275,7 @@ def switch_version(version_):
         },
         {"__type__": "update", "interactive": True, "value": False},
         {"__type__": "update", "visible": True if version in v3v4set else False},
-    )  # {'__type__': 'update', "interactive": False if version in v3v4set else True, "value": False}, \ ####batch infer
+    )
 
 
 if os.path.exists("GPT_SoVITS/text/G2PWModel"):
@@ -1313,7 +1300,7 @@ with gr.Blocks(title="GPT-SoVITS WebUI", analytics_enabled=False, js=js, css=css
     )
 
     with gr.Tabs():
-        with gr.TabItem("0-" + i18n("前置数据集获取工具")):  # 提前随机切片防止uvr5爆内存->uvr5->slicer->asr->打标
+        with gr.TabItem("0-" + i18n("前置数据集获取工具")):
             with gr.Accordion(label="0a-" + i18n("UVR5人声伴奏分离&去混响去延迟工具")):
                 with gr.Row():
                     with gr.Column(scale=3):
@@ -1382,7 +1369,6 @@ with gr.Blocks(title="GPT-SoVITS WebUI", analytics_enabled=False, js=js, css=css
                         value=process_info(process_name_slice, "close"), variant="primary", visible=False
                     )
 
-            # gr.Markdown(value="0bb-" + i18n("语音降噪工具")+i18n("(不稳定，先别用，可能劣化模型效果！)"))
             with gr.Row(visible=False):
                 with gr.Column(scale=3):
                     with gr.Row():
@@ -1432,13 +1418,13 @@ with gr.Blocks(title="GPT-SoVITS WebUI", analytics_enabled=False, js=js, css=css
                         value=process_info(process_name_asr, "close"), variant="primary", visible=False
                     )
 
-                def change_lang_choices(key):  # 根据选择的模型修改可选的语言
+                def change_lang_choices(key):
                     return {"__type__": "update", "choices": asr_dict[key]["lang"], "value": asr_dict[key]["lang"][0]}
 
-                def change_size_choices(key):  # 根据选择的模型修改可选的模型尺寸
+                def change_size_choices(key):
                     return {"__type__": "update", "choices": asr_dict[key]["size"], "value": asr_dict[key]["size"][-1]}
 
-                def change_precision_choices(key):  # 根据选择的模型修改可选的语言
+                def change_precision_choices(key):
                     if key == "Faster Whisper (多语种)":
                         if default_batch_size <= 4:
                             precision = "int8"
@@ -1540,7 +1526,6 @@ with gr.Blocks(title="GPT-SoVITS WebUI", analytics_enabled=False, js=js, css=css
                         with gr.Row():
                             inp_wav_dir = gr.Textbox(
                                 label=i18n("*训练集音频文件目录"),
-                                # value=r"D:\RVC1006\GPT-SoVITS\raw\xxx",
                                 interactive=True,
                                 placeholder=i18n(
                                     "填切割后音频所在目录！读取的音频文件完整路径=该目录-拼接-list文件里波形对应的文件名（不是全路径）。如果留空则使用.list文件里的绝对全路径。"
@@ -1731,13 +1716,13 @@ with gr.Blocks(title="GPT-SoVITS WebUI", analytics_enabled=False, js=js, css=css
                                     label=i18n("文本模块学习率权重"),
                                     value=0.4,
                                     visible=True if version not in v3v4set else False,
-                                )  # v3v4 not need
+                                )
                                 lora_rank = gr.Radio(
                                     label=i18n("LoRA秩"),
                                     value="32",
                                     choices=["16", "32", "64", "128"],
                                     visible=True if version in v3v4set else False,
-                                )  # v1v2 not need
+                                )
                                 save_every_epoch = gr.Slider(
                                     minimum=1,
                                     maximum=max_sovits_save_every_epoch,
@@ -1766,7 +1751,7 @@ with gr.Blocks(title="GPT-SoVITS WebUI", analytics_enabled=False, js=js, css=css
                                     interactive=True if version in v3v4set else False,
                                     show_label=True,
                                     visible=False,
-                                )  # 只有V3s2可以用
+                                )
                             with gr.Row():
                                 gpu_numbers1Ba = gr.Textbox(
                                     label=i18n("GPU卡号以-分割，每个卡号一个进程"),
@@ -1973,11 +1958,10 @@ with gr.Blocks(title="GPT-SoVITS WebUI", analytics_enabled=False, js=js, css=css
         with gr.TabItem(i18n("2-GPT-SoVITS-变声")):
             gr.Markdown(value=i18n("施工中，请静候佳音"))
 
-    app.queue().launch(  # concurrency_count=511, max_size=1022
+    app.queue().launch(
         server_name="0.0.0.0",
         inbrowser=True,
         share=is_share,
         server_port=webui_port_main,
-        # quiet=True,
     )
 

@@ -1,26 +1,18 @@
 #!/usr/bin/env python3
-"""Initialize modules for espnet2 neural networks."""
+"""Initialize weights of espnet2 neural network modules.
+
+initialize(model, init) applies the given method (xavier_uniform, xavier_normal, kaiming_uniform,
+kaiming_normal) to weights and zeros biases. Custom modules may implement espnet_initialization_fn.
+"""
 
 import torch
 from typeguard import check_argument_types
 
 
 def initialize(model: torch.nn.Module, init: str):
-    """Initialize weights of a neural network module.
-
-    Parameters are initialized using the given method or distribution.
-
-    Custom initialization routines can be implemented into submodules
-    as function `espnet_initialization_fn` within the custom module.
-
-    Args:
-        model: Target.
-        init: Method of initialization.
-    """
     assert check_argument_types()
     print("init with", init)
 
-    # weight init
     for p in model.parameters():
         if p.dim() > 1:
             if init == "xavier_uniform":
@@ -33,7 +25,6 @@ def initialize(model: torch.nn.Module, init: str):
                 torch.nn.init.kaiming_normal_(p.data, nonlinearity="relu")
             else:
                 raise ValueError("Unknown initialization: " + init)
-    # bias init
     for name, p in model.named_parameters():
         if ".bias" in name and p.dim() == 1:
             p.data.zero_()

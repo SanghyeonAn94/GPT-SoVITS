@@ -18,19 +18,15 @@ def synthesize(
     target_language,
     output_path,
 ):
-    # Read reference text
     with open(ref_text_path, "r", encoding="utf-8") as file:
         ref_text = file.read()
 
-    # Read target text
     with open(target_text_path, "r", encoding="utf-8") as file:
         target_text = file.read()
 
-    # Change model weights
     change_gpt_weights(gpt_path=GPT_model_path)
     change_sovits_weights(sovits_path=SoVITS_model_path)
 
-    # Synthesize audio
     synthesis_result = get_tts_wav(
         ref_wav_path=ref_audio_path,
         prompt_text=ref_text,

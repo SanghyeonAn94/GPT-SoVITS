@@ -35,8 +35,6 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, skip_optimizer=False
     new_state_dict = {}
     for k, v in state_dict.items():
         try:
-            # assert "quantizer" not in k
-            # print("load", k)
             new_state_dict[k] = saved_state_dict[k]
             assert saved_state_dict[k].shape == v.shape, (
                 saved_state_dict[k].shape,
@@ -44,7 +42,7 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, skip_optimizer=False
             )
         except:
             traceback.print_exc()
-            print("error, %s is not in the checkpoint" % k)  # shape不对也会，比如text_embedding当cleaner修改时
+            print("error, %s is not in the checkpoint" % k)
             new_state_dict[k] = v
     if hasattr(model, "module"):
         model.module.load_state_dict(new_state_dict)
@@ -64,7 +62,7 @@ import shutil
 from time import time as ttime
 
 
-def my_save(fea, path):  #####fix issue: torch.save doesn't support chinese path
+def my_save(fea, path):
     dir = os.path.dirname(path)
     name = os.path.basename(path)
     tmp_path = "%s.pth" % (ttime())
@@ -78,7 +76,6 @@ def save_checkpoint(model, optimizer, learning_rate, iteration, checkpoint_path)
         state_dict = model.module.state_dict()
     else:
         state_dict = model.state_dict()
-    # torch.save(
     my_save(
         {
             "model": state_dict,
@@ -204,9 +201,6 @@ def get_hparams(init=True, stage=1):
         default=None,
         help="resume step",
     )
-    # parser.add_argument('-e', '--exp_dir', type=str, required=False,default=None,help='experiment directory')
-    # parser.add_argument('-g', '--pretrained_s2G', type=str, required=False,default=None,help='pretrained sovits gererator weights')
-    # parser.add_argument('-d', '--pretrained_s2D', type=str, required=False,default=None,help='pretrained sovits discriminator weights')
 
     args = parser.parse_args()
 
@@ -218,7 +212,6 @@ def get_hparams(init=True, stage=1):
     hparams = HParams(**config)
     hparams.pretrain = args.pretrain
     hparams.resume_step = args.resume_step
-    # hparams.data.exp_dir = args.exp_dir
     if stage == 1:
         model_dir = hparams.s1_ckpt_dir
     else:
@@ -234,14 +227,6 @@ def get_hparams(init=True, stage=1):
 
 
 def clean_checkpoints(path_to_models="logs/44k/", n_ckpts_to_keep=2, sort_by_time=True):
-    """Freeing up space by deleting saved ckpts
-
-    Arguments:
-    path_to_models    --  Path to the model directory
-    n_ckpts_to_keep   --  Number of ckpts to keep, excluding G_0.pth and D_0.pth
-    sort_by_time      --  True -> chronologically delete ckpts
-                          False -> lexicographically delete ckpts
-    """
     import re
 
     ckpts_files = [f for f in os.listdir(path_to_models) if os.path.isfile(os.path.join(path_to_models, f))]

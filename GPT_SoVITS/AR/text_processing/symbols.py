@@ -1,5 +1,8 @@
-# modified from https://github.com/yangdongchao/SoundStorm/blob/master/soundstorm/s1/AR/text_processing/symbols.py
-# reference: https://github.com/lifeiteng/vall-e
+"""Symbol table (pad, punctuation, letters, IPA) and id mappings for the phonemizer.
+
+Modified from https://github.com/yangdongchao/SoundStorm and https://github.com/lifeiteng/vall-e.
+"""
+
 PAD = "_"
 PUNCTUATION = ';:,.!?¡¿—…"«»“” '
 LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"

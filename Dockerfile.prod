@@ -1,12 +1,7 @@
-# Production Dockerfile for GPT-SoVITS
-# Self-contained image with GPU support and all dependencies
-
 FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
 
-# Prevent interactive prompts during build
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies including AWS CLI
 RUN apt-get update && apt-get install -y \
     software-properties-common \
     && add-apt-repository ppa:deadsnakes/ppa \
@@ -23,54 +18,41 @@ RUN apt-get update && apt-get install -y \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install AWS CLI v2
 RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
     && unzip awscliv2.zip \
     && ./aws/install \
     && rm -rf awscliv2.zip aws
 
-# Install pip for Python 3.11
 RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11
 
-# Set Python 3.11 as default
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 && \
     update-alternatives --install /usr/bin/pip pip /usr/local/bin/pip3.11 1
 
-# Set working directory
 WORKDIR /workspace
 
-# Environment variables for GPU
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
-# Install PyTorch with CUDA 12.8 support first
 RUN pip install --no-cache-dir \
     torch==2.7.1 \
     torchaudio==2.7.1 \
     --index-url https://download.pytorch.org/whl/cu128
 
-# Copy only requirements.txt for dependency pre-installation
 COPY requirements.txt /tmp/gpt-sovits-requirements.txt
 
-# Install GPT-SoVITS dependencies
 RUN pip install --no-cache-dir -r /tmp/gpt-sovits-requirements.txt
 
-# Install additional dependencies for STT
 RUN pip install --no-cache-dir \
     "faster-whisper>=1.1.0" \
     soundfile \
     BS-RoFormer
 
-# Download NLTK data for English text processing
 RUN python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng'); nltk.download('punkt')"
 
-# Create cache storage directory (shared with ML Service)
 RUN mkdir -p /app/shared/cache_storage
 
-# Expose API port
 EXPOSE 9881
 
-# Environment variables for S3 model download
 ENV API_HOST=0.0.0.0
 ENV API_PORT=9881
 ENV CONFIG_PATH=GPT_SoVITS/configs/tts_infer.yaml
@@ -81,7 +63,6 @@ ENV S3_MODEL_URI=s3://shiftup-enterprise-ai-service/tts/model_registry/GPT-SoVIT
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
     CMD curl -sf http://localhost:9881/ > /dev/null 2>&1 || exit 1
 
-# Create entrypoint script for S3 model download
 RUN echo '#!/bin/bash\n\
 set -e\n\
 \n\

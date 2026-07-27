@@ -1,4 +1,8 @@
-# modified from https://github.com/feng-yufei/shared_debugging_code/blob/main/train_t2s.py
+"""Stage-1 GPT (text-to-semantic) training entry point.
+
+Modified from https://github.com/feng-yufei/shared_debugging_code/blob/main/train_t2s.py
+"""
+
 import os
 
 if "_CUDA_VISIBLE_DEVICES" in os.environ:
@@ -14,7 +18,7 @@ from AR.models.t2s_lightning_module import Text2SemanticLightningModule
 from AR.utils.io import load_yaml_config
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import TensorBoardLogger  # WandbLogger
+from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.strategies import DDPStrategy
 
 logging.getLogger("numba").setLevel(logging.WARNING)
@@ -44,13 +48,10 @@ class my_model_ckpt(ModelCheckpoint):
         self.config = config
 
     def on_train_epoch_end(self, trainer, pl_module):
-        # if not self._should_skip_saving_checkpoint(trainer) and self._should_save_on_train_epoch_end(trainer):
         if self._should_save_on_train_epoch_end(trainer):
             monitor_candidates = self._monitor_candidates(trainer)
             if self._every_n_epochs >= 1 and (trainer.current_epoch + 1) % self._every_n_epochs == 0:
-                if (
-                    self.if_save_latest == True
-                ):  ####如果设置只保存最后一个ckpt，在保存下一个ckpt后要清理掉之前的所有ckpt
+                if self.if_save_latest == True:
                     to_clean = list(os.listdir(self.dirpath))
                 self._save_topk_checkpoint(trainer, monitor_candidates)
                 if self.if_save_latest == True:
@@ -67,8 +68,6 @@ class my_model_ckpt(ModelCheckpoint):
                         to_save_od["weight"][key] = dictt[key].half()
                     to_save_od["config"] = self.config
                     to_save_od["info"] = "GPT-e%s" % (trainer.current_epoch + 1)
-                    # torch.save(
-                    # print(os.environ)
                     if os.environ.get("LOCAL_RANK", "0") == "0":
                         my_save(
                             to_save_od,
@@ -111,8 +110,6 @@ def main(args):
     trainer: Trainer = Trainer(
         max_epochs=config["train"]["epochs"],
         accelerator="gpu" if torch.cuda.is_available() else "cpu",
-        # val_check_interval=9999999999999999999999,###不要验证
-        # check_val_every_n_epoch=None,
         limit_val_batches=0,
         devices=-1 if torch.cuda.is_available() else 1,
         benchmark=False,
@@ -124,7 +121,7 @@ def main(args):
         logger=logger,
         num_sanity_val_steps=0,
         callbacks=[ckpt_callback],
-        use_distributed_sampler=False,  # 非常简单的修改，但解决了采用自定义的 bucket_sampler 下训练步数不一致的问题！
+        use_distributed_sampler=False,
     )
 
     model: Text2SemanticLightningModule = Text2SemanticLightningModule(config, output_dir)
@@ -133,12 +130,9 @@ def main(args):
         config,
         train_semantic_path=config["train_semantic_path"],
         train_phoneme_path=config["train_phoneme_path"],
-        # dev_semantic_path=args.dev_semantic_path,
-        # dev_phoneme_path=args.dev_phoneme_path
     )
 
     try:
-        # 使用正则表达式匹配文件名中的数字部分，并按数字大小进行排序
         newest_ckpt_name = get_newest_ckpt(os.listdir(ckpt_dir))
         ckpt_path = ckpt_dir / newest_ckpt_name
     except Exception:
@@ -147,7 +141,6 @@ def main(args):
     trainer.fit(model, data_module, ckpt_path=ckpt_path)
 
 
-# srun --gpus-per-node=1 --ntasks-per-node=1 python train.py --path-to-configuration configurations/default.yaml
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -157,14 +150,6 @@ if __name__ == "__main__":
         default="configs/s1longer.yaml",
         help="path of config file",
     )
-    # args for dataset
-    # parser.add_argument('--train_semantic_path',type=str,default='/data/docker/liujing04/gpt-vits/fine_tune_dataset/xuangou/6-name2semantic.tsv')
-    # parser.add_argument('--train_phoneme_path', type=str, default='/data/docker/liujing04/gpt-vits/fine_tune_dataset/xuangou/2-name2text.txt')
-
-    # parser.add_argument('--dev_semantic_path', type=str, default='dump_mix/semantic_dev.tsv')
-    # parser.add_argument('--dev_phoneme_path', type=str, default='dump_mix/phoneme_dev.npy')
-    # parser.add_argument('--output_dir',type=str,default='/data/docker/liujing04/gpt-vits/fine_tune_dataset/xuangou/logs_s1',help='directory to save the results')
-    # parser.add_argument('--output_dir',type=str,default='/liujing04/gpt_logs/s1/xuangou_ft',help='directory to save the results')
 
     args = parser.parse_args()
     logging.info(str(args))

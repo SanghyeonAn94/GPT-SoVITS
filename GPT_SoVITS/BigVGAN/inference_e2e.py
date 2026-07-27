@@ -49,7 +49,6 @@ def inference(a, h):
     generator.remove_weight_norm()
     with torch.no_grad():
         for i, filname in enumerate(filelist):
-            # Load the mel spectrogram in .npy format
             x = np.load(os.path.join(a.input_mels_dir, filname))
             x = torch.FloatTensor(x).to(device)
             if len(x.shape) == 2:

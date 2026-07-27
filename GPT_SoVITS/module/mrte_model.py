@@ -1,4 +1,4 @@
-# This is Multi-reference timbre encoder
+"""Multi-reference timbre encoder."""
 
 import torch
 from torch import nn
@@ -87,7 +87,6 @@ class MELEncoder(nn.Module):
         self.proj = nn.Conv1d(hidden_channels, out_channels, 1)
 
     def forward(self, x):
-        # print(x.shape,x_lengths.shape)
         x = self.pre(x)
         x = self.enc(x)
         x = self.proj(x)
@@ -119,7 +118,6 @@ class WN(torch.nn.Module):
             in_layer = weight_norm(in_layer)
             self.in_layers.append(in_layer)
 
-            # last one is not necessary
             if i < n_layers - 1:
                 res_skip_channels = 2 * hidden_channels
             else:

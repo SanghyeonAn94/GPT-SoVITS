@@ -212,7 +212,7 @@ class ERes2Net(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        x = x.permute(0, 2, 1)  # (B,T,F) => (B,F,T)
+        x = x.permute(0, 2, 1)
 
         x = x.unsqueeze_(1)
         out = F.relu(self.bn1(self.conv1(x)))
@@ -238,7 +238,7 @@ class ERes2Net(nn.Module):
             return embed_a
 
     def forward2(self, x, if_mean):
-        x = x.permute(0, 2, 1)  # (B,T,F) => (B,F,T)
+        x = x.permute(0, 2, 1)
 
         x = x.unsqueeze_(1)
         out = F.relu(self.bn1(self.conv1(x)))
@@ -251,25 +251,16 @@ class ERes2Net(nn.Module):
         fuse_out123 = self.fuse_mode123(out3, fuse_out12_downsample)
         out4 = self.layer4(out3)
         fuse_out123_downsample = self.layer3_downsample(fuse_out123)
-        fuse_out1234 = self.fuse_mode1234(out4, fuse_out123_downsample).flatten(start_dim=1, end_dim=2)  # bs,20480,T
+        fuse_out1234 = self.fuse_mode1234(out4, fuse_out123_downsample).flatten(start_dim=1, end_dim=2)
         if if_mean == False:
-            mean = fuse_out1234[0].transpose(1, 0)  # (T,20480),bs=T
+            mean = fuse_out1234[0].transpose(1, 0)
         else:
-            mean = fuse_out1234.mean(2)  # bs,20480
+            mean = fuse_out1234.mean(2)
         mean_std = torch.cat([mean, torch.zeros_like(mean)], 1)
-        return self.seg_1(mean_std)  # (T,192)
-
-        # stats = self.pool(fuse_out1234)
-        # if self.two_emb_layer:
-        #     out = F.relu(embed_a)
-        #     out = self.seg_bn_1(out)
-        #     embed_b = self.seg_2(out)
-        #     return embed_b
-        # else:
-        #     return embed_a
+        return self.seg_1(mean_std)
 
     def forward3(self, x):
-        x = x.permute(0, 2, 1)  # (B,T,F) => (B,F,T)
+        x = x.permute(0, 2, 1)
 
         x = x.unsqueeze_(1)
         out = F.relu(self.bn1(self.conv1(x)))
@@ -284,6 +275,3 @@ class ERes2Net(nn.Module):
         fuse_out123_downsample = self.layer3_downsample(fuse_out123)
         fuse_out1234 = self.fuse_mode1234(out4, fuse_out123_downsample).flatten(start_dim=1, end_dim=2).mean(-1)
         return fuse_out1234
-        # print(fuse_out1234.shape)
-        # print(fuse_out1234.flatten(start_dim=1,end_dim=2).shape)
-        # pdb.set_trace()

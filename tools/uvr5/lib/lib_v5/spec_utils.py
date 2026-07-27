@@ -18,8 +18,6 @@ def crop_center(h1, h2):
     elif h1_shape[3] < h2_shape[3]:
         raise ValueError("h1_shape[3] must be greater than h2_shape[3]")
 
-    # s_freq = (h2_shape[2] - h1_shape[2]) // 2
-    # e_freq = s_freq + h1_shape[2]
     s_time = (h1_shape[3] - h2_shape[3]) // 2
     e_time = s_time + h2_shape[3]
     h1 = h1[:, :, :, s_time:e_time]
@@ -98,8 +96,7 @@ def combine_spectrograms(specs, mp):
     if offset > mp.param["bins"]:
         raise ValueError("Too much bins")
 
-    # lowpass fiter
-    if mp.param["pre_filter_start"] > 0:  # and mp.param['band'][bands_n]['res_type'] in ['scipy', 'polyphase']:
+    if mp.param["pre_filter_start"] > 0:
         if bands_n == 1:
             spec_c = fft_lp_filter(spec_c, mp.param["pre_filter_start"], mp.param["pre_filter_stop"])
         else:
@@ -212,7 +209,7 @@ def cache_or_load(mix_path, inst_path, mp):
         for d in range(len(mp.param["band"]), 0, -1):
             bp = mp.param["band"][d]
 
-            if d == len(mp.param["band"]):  # high-end band
+            if d == len(mp.param["band"]):
                 X_wave[d], _ = librosa.load(
                     mix_path, sr=bp["sr"], mono=False, dtype=np.float32, res_type=bp["res_type"]
                 )
@@ -223,7 +220,7 @@ def cache_or_load(mix_path, inst_path, mp):
                     dtype=np.float32,
                     res_type=bp["res_type"],
                 )
-            else:  # lower bands
+            else:
                 X_wave[d] = librosa.resample(
                     X_wave[d + 1],
                     orig_sr=mp.param["band"][d + 1]["sr"],
@@ -336,8 +333,8 @@ def cmb_spectrogram_to_wave(spec_m, mp, extra_bins_h=None, extra_bins=None):
         spec_s[:, bp["crop_start"] : bp["crop_stop"], :] = spec_m[:, offset : offset + h, :]
 
         offset += h
-        if d == bands_n:  # higher
-            if extra_bins_h:  # if --high_end_process bypass
+        if d == bands_n:
+            if extra_bins_h:
                 max_bin = bp["n_fft"] // 2
                 spec_s[:, max_bin - extra_bins_h : max_bin, :] = extra_bins[:, :extra_bins_h, :]
             if bp["hpf_start"] > 0:
@@ -363,7 +360,7 @@ def cmb_spectrogram_to_wave(spec_m, mp, extra_bins_h=None, extra_bins=None):
                 )
         else:
             sr = mp.param["band"][d + 1]["sr"]
-            if d == 1:  # lower
+            if d == 1:
                 spec_s = fft_lp_filter(spec_s, bp["lpf_start"], bp["lpf_stop"])
                 wave = librosa.resample(
                     spectrogram_to_wave(
@@ -377,7 +374,7 @@ def cmb_spectrogram_to_wave(spec_m, mp, extra_bins_h=None, extra_bins=None):
                     target_sr=sr,
                     res_type="sinc_fastest",
                 )
-            else:  # mid
+            else:
                 spec_s = fft_hp_filter(spec_s, bp["hpf_start"], bp["hpf_stop"] - 1)
                 spec_s = fft_lp_filter(spec_s, bp["lpf_start"], bp["lpf_stop"])
                 wave2 = np.add(
@@ -390,7 +387,6 @@ def cmb_spectrogram_to_wave(spec_m, mp, extra_bins_h=None, extra_bins=None):
                         mp.param["reverse"],
                     ),
                 )
-                # wave = librosa.core.resample(wave2, orig_sr=bp['sr'], target_sr=sr, res_type="sinc_fastest")
                 wave = librosa.core.resample(wave2, orig_sr=bp["sr"], target_sr=sr, res_type="scipy")
 
     return wave.T
@@ -529,7 +525,7 @@ if __name__ == "__main__":
         for d in range(len(mp.param["band"]), 0, -1):
             bp = mp.param["band"][d]
 
-            if d == len(mp.param["band"]):  # high-end band
+            if d == len(mp.param["band"]):
                 wave[d], _ = librosa.load(
                     args.input[i],
                     sr=bp["sr"],
@@ -538,9 +534,9 @@ if __name__ == "__main__":
                     res_type=bp["res_type"],
                 )
 
-                if len(wave[d].shape) == 1:  # mono to stereo
+                if len(wave[d].shape) == 1:
                     wave[d] = np.array([wave[d], wave[d]])
-            else:  # lower bands
+            else:
                 wave[d] = librosa.resample(
                     wave[d + 1],
                     orig_sr=mp.param["band"][d + 1]["sr"],
@@ -631,5 +627,3 @@ if __name__ == "__main__":
 
         for i, e in tqdm(enumerate(trackalignment), desc="Performing Alignment..."):
             os.system(f"python lib/align_tracks.py {e['file1']} {e['file2']}")
-
-    # print('Total time: {0:.{1}f}s'.format(time.time() - start_time, 1))

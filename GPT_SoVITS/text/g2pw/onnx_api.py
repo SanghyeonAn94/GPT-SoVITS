@@ -1,5 +1,6 @@
-# This code is modified from https://github.com/PaddlePaddle/PaddleSpeech/tree/develop/paddlespeech/t2s/frontend/g2pw
-# This code is modified from https://github.com/GitYCC/g2pW
+"""Modified from https://github.com/PaddlePaddle/PaddleSpeech/tree/develop/paddlespeech/t2s/frontend/g2pw
+and https://github.com/GitYCC/g2pW
+"""
 
 import json
 import os
@@ -24,7 +25,6 @@ try:
     onnxruntime.preload_dlls()
 except:
     pass
-    # traceback.print_exc()
 warnings.filterwarnings("ignore")
 
 model_version = "1.1"
@@ -62,7 +62,7 @@ def download_and_decompress(model_dir: str = "G2PWModel/"):
         extract_dir = os.path.join(parent_directory, "G2PWModel_1.1")
         extract_dir_new = os.path.join(parent_directory, "G2PWModel")
         print("Downloading g2pw model...")
-        modelscope_url = "https://www.modelscope.cn/models/kamiorinn/g2pw/resolve/master/G2PWModel_1.1.zip"  # "https://paddlespeech.cdn.bcebos.com/Parakeet/released_models/g2p/G2PWModel_1.1.zip"
+        modelscope_url = "https://www.modelscope.cn/models/kamiorinn/g2pw/resolve/master/G2PWModel_1.1.zip"
         with requests.get(modelscope_url, stream=True) as r:
             r.raise_for_status()
             with open(zip_dir, "wb") as f:
@@ -199,7 +199,6 @@ class G2PWOnnxConverter:
 
         texts, query_ids, sent_ids, partial_results = self._prepare_data(sentences=sentences)
         if len(texts) == 0:
-            # sentences no polyphonic words
             return partial_results
 
         onnx_input = prepare_onnx_input(
@@ -226,7 +225,6 @@ class G2PWOnnxConverter:
     def _prepare_data(self, sentences: List[str]) -> Tuple[List[str], List[int], List[int], List[List[str]]]:
         texts, query_ids, sent_ids, partial_results = [], [], [], []
         for sent_id, sent in enumerate(sentences):
-            # pypinyin works well for Simplified Chinese than Traditional Chinese
             sent_s = tranditional_to_simplified(sent)
             pypinyin_result = pinyin(sent_s, neutral_tone_with_five=True, style=Style.TONE3)
             partial_result = [None] * len(sent)
@@ -239,7 +237,6 @@ class G2PWOnnxConverter:
                     partial_result[i] = self.style_convert_func(self.monophonic_chars_dict[char])
                 elif char in self.char_bopomofo_dict:
                     partial_result[i] = pypinyin_result[i][0]
-                    # partial_result[i] =  self.style_convert_func(self.char_bopomofo_dict[char][0])
                 else:
                     partial_result[i] = pypinyin_result[i][0]
 

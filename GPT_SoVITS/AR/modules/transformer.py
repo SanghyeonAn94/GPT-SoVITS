@@ -36,7 +36,6 @@ class LayerNorm(nn.Module):
         factory_kwargs = {"device": device, "dtype": dtype}
         super(LayerNorm, self).__init__()
         if isinstance(normalized_shape, numbers.Integral):
-            # mypy error: incompatible types in assignment
             normalized_shape = (normalized_shape,)  # type: ignore[assignment]
         self.normalized_shape = tuple(normalized_shape)  # type: ignore[arg-type]
         self.eps = eps
@@ -95,24 +94,6 @@ class IdentityNorm(nn.Module):
 
 
 class TransformerEncoder(nn.Module):
-    r"""TransformerEncoder is a stack of N encoder layers. Users can build the
-    BERT(https://arxiv.org/abs/1810.04805) model with corresponding parameters.
-
-    Args:
-        encoder_layer: an instance of the TransformerEncoderLayer() class (required).
-        num_layers: the number of sub-encoder-layers in the encoder (required).
-        norm: the layer normalization component (optional).
-        enable_nested_tensor: if True, input will automatically convert to nested tensor
-            (and convert back on output). This will improve the overall performance of
-            TransformerEncoder when padding rate is high. Default: ``True`` (enabled).
-
-    Examples::
-        >>> encoder_layer = TransformerEncoderLayer(d_model=512, nhead=8)
-        >>> transformer_encoder = TransformerEncoder(encoder_layer, num_layers=6)
-        >>> src = torch.rand(10, 32, 512)
-        >>> out = transformer_encoder(src)
-    """
-
     __constants__ = ["norm"]
 
     def __init__(self, encoder_layer, num_layers, norm=None):
@@ -129,19 +110,8 @@ class TransformerEncoder(nn.Module):
         return_layer_states: bool = False,
         cache=None,
     ) -> Tensor:
-        r"""Pass the input through the encoder layers in turn.
-
-        Args:
-            src: the sequence to the encoder (required).
-            mask: the mask for the src sequence (optional).
-            src_key_padding_mask: the mask for the src keys per batch (optional).
-            return_layer_states: return layers' state (optional).
-
-        Shape:
-            see the docs in Transformer class.
-        """
         if return_layer_states:
-            layer_states = []  # layers' output
+            layer_states = []
             output = src
             for mod in self.layers:
                 output = mod(
@@ -196,11 +166,8 @@ class TransformerEncoderLayer(nn.Module):
     ) -> None:
         factory_kwargs = {"device": device, "dtype": dtype}
         super(TransformerEncoderLayer, self).__init__()
-        # print(233333333333,d_model,nhead)
-        # import os
-        # os._exit(2333333)
         self.self_attn = MultiheadAttention(
-            d_model,  # 512 16
+            d_model,
             nhead,
             dropout=dropout,
             batch_first=batch_first,
@@ -209,7 +176,6 @@ class TransformerEncoderLayer(nn.Module):
             **factory_kwargs,
         )
 
-        # Implementation of Feedforward model
         self.linear1 = linear1_feedforward_cls(d_model, dim_feedforward, **factory_kwargs)
         self.dropout = nn.Dropout(dropout)
         self.linear2 = linear2_feedforward_cls(dim_feedforward, d_model, **factory_kwargs)
@@ -218,7 +184,6 @@ class TransformerEncoderLayer(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
 
-        # Legacy string support for activation function.
         if isinstance(activation, str):
             activation = _get_activation_fn(activation)
         elif isinstance(activation, partial):
@@ -226,14 +191,6 @@ class TransformerEncoderLayer(nn.Module):
         elif activation == BalancedDoubleSwish:
             activation = BalancedDoubleSwish(d_model)
 
-        # # We can't test self.activation in forward() in TorchScript,
-        # # so stash some information about it instead.
-        # if activation is F.relu or isinstance(activation, torch.nn.ReLU):
-        #     self.activation_relu_or_gelu = 1
-        # elif activation is F.gelu or isinstance(activation, torch.nn.GELU):
-        #     self.activation_relu_or_gelu = 2
-        # else:
-        #     self.activation_relu_or_gelu = 0
         self.activation = activation
 
         norm1 = layer_norm_cls(d_model, eps=layer_norm_eps, **factory_kwargs)
@@ -261,16 +218,6 @@ class TransformerEncoderLayer(nn.Module):
         src_key_padding_mask: Optional[Tensor] = None,
         cache=None,
     ) -> Tensor:
-        r"""Pass the input through the encoder layer.
-
-        Args:
-            src: the sequence to the encoder layer (required).
-            src_mask: the mask for the src sequence (optional).
-            src_key_padding_mask: the mask for the src keys per batch (optional).
-
-        Shape:
-            see the docs in Transformer class.
-        """
         x, stage_embedding = src, None
         is_src_tuple = False
         if isinstance(src, tuple):
@@ -301,7 +248,6 @@ class TransformerEncoderLayer(nn.Module):
             return (x, stage_embedding)
         return x
 
-    # self-attention block
     def _sa_block(
         self,
         x: Tensor,
@@ -309,10 +255,6 @@ class TransformerEncoderLayer(nn.Module):
         key_padding_mask: Optional[Tensor],
         cache=None,
     ) -> Tensor:
-        # print(x.shape,attn_mask.shape,key_padding_mask)
-        # torch.Size([1, 188, 512]) torch.Size([188, 188]) None
-        # import os
-        # os._exit(23333)
         x = self.self_attn(
             x,
             x,
@@ -324,15 +266,12 @@ class TransformerEncoderLayer(nn.Module):
         )[0]
         return self.dropout1(x)
 
-    # feed forward block
     def _ff_block(self, x: Tensor) -> Tensor:
         x = self.linear2(self.dropout(self.activation(self.linear1(x))))
         return self.dropout2(x)
 
 
 class AdaptiveLayerNorm(nn.Module):
-    r"""Adaptive Layer Normalization"""
-
     def __init__(self, d_model, norm) -> None:
         super(AdaptiveLayerNorm, self).__init__()
         self.project_layer = nn.Linear(d_model, 2 * d_model)

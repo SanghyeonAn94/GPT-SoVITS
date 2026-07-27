@@ -40,14 +40,12 @@ from process_ckpt import savee
 
 torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.deterministic = False
-###反正A100fp32更快，那试试tf32吧
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
-torch.set_float32_matmul_precision("medium")  # 最低精度但最快（也就快一丁点），对于结果造成不了影响
-# from config import pretrained_s2G,pretrained_s2D
+torch.set_float32_matmul_precision("medium")
 global_step = 0
 
-device = "cpu"  # cuda以外的设备，等mps优化后加入
+device = "cpu"
 
 
 def main():
@@ -73,7 +71,6 @@ def run(rank, n_gpus, hps):
     if rank == 0:
         logger = utils.get_logger(hps.data.exp_dir)
         logger.info(hps)
-        # utils.check_git_hash(hps.s2_ckpt_dir)
         writer = SummaryWriter(log_dir=hps.s2_ckpt_dir)
         writer_eval = SummaryWriter(log_dir=os.path.join(hps.s2_ckpt_dir, "eval"))
 
@@ -126,11 +123,6 @@ def run(rank, n_gpus, hps):
         persistent_workers=True,
         prefetch_factor=4,
     )
-    # if rank == 0:
-    #     eval_dataset = TextAudioSpeakerLoader(hps.data.validation_files, hps.data, val=True)
-    #     eval_loader = DataLoader(eval_dataset, num_workers=0, shuffle=False,
-    #                              batch_size=1, pin_memory=True,
-    #                              drop_last=False, collate_fn=collate_fn)
 
     net_g = (
         SynthesizerTrn(
@@ -165,12 +157,7 @@ def run(rank, n_gpus, hps):
         net_g.parameters(),
     )
 
-    # te_p=net_g.enc_p.text_embedding.parameters()
-    # et_p=net_g.enc_p.encoder_text.parameters()
-    # mrte_p=net_g.enc_p.mrte.parameters()
-
     optim_g = torch.optim.AdamW(
-        # filter(lambda p: p.requires_grad, net_g.parameters()),###默认所有层lr一致
         [
             {"params": base_params, "lr": hps.train.learning_rate},
             {
@@ -203,15 +190,14 @@ def run(rank, n_gpus, hps):
         net_g = net_g.to(device)
         net_d = net_d.to(device)
 
-    try:  # 如果能加载自动resume
+    try:
         _, _, _, epoch_str = utils.load_checkpoint(
             utils.latest_checkpoint_path("%s/logs_s2_%s" % (hps.data.exp_dir, hps.model.version), "D_*.pth"),
             net_d,
             optim_d,
-        )  # D多半加载没事
+        )
         if rank == 0:
             logger.info("loaded D")
-        # _, _, _, epoch_str = utils.load_checkpoint(utils.latest_checkpoint_path(hps.model_dir, "G_*.pth"), net_g, optim_g,load_opt=0)
         _, _, _, epoch_str = utils.load_checkpoint(
             utils.latest_checkpoint_path("%s/logs_s2_%s" % (hps.data.exp_dir, hps.model.version), "G_*.pth"),
             net_g,
@@ -219,10 +205,7 @@ def run(rank, n_gpus, hps):
         )
         epoch_str += 1
         global_step = (epoch_str - 1) * len(train_loader)
-        # epoch_str = 1
-        # global_step = 0
-    except:  # 如果首次不能加载，加载pretrain
-        # traceback.print_exc()
+    except:
         epoch_str = 1
         global_step = 0
         if (
@@ -243,7 +226,7 @@ def run(rank, n_gpus, hps):
                     torch.load(hps.train.pretrained_s2G, map_location="cpu", weights_only=False)["weight"],
                     strict=False,
                 ),
-            )  ##测试不加载优化器
+            )
         if (
             hps.train.pretrained_s2D != ""
             and hps.train.pretrained_s2D != None
@@ -261,9 +244,6 @@ def run(rank, n_gpus, hps):
                     torch.load(hps.train.pretrained_s2D, map_location="cpu", weights_only=False)["weight"],
                 ),
             )
-
-    # scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
-    # scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optim_d, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
 
     scheduler_g = torch.optim.lr_scheduler.ExponentialLR(
         optim_g,
@@ -292,7 +272,6 @@ def run(rank, n_gpus, hps):
                 [optim_g, optim_d],
                 [scheduler_g, scheduler_d],
                 scaler,
-                # [train_loader, eval_loader], logger, [writer, writer_eval])
                 [train_loader, None],
                 logger,
                 [writer, writer_eval],
@@ -318,7 +297,6 @@ def run(rank, n_gpus, hps):
 def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loaders, logger, writers):
     net_g, net_d = nets
     optim_g, optim_d = optims
-    # scheduler_g, scheduler_d = schedulers
     train_loader, eval_loader = loaders
     if writers is not None:
         writer, writer_eval = writers
@@ -356,7 +334,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             )
             ssl = ssl.cuda(rank, non_blocking=True)
             ssl.requires_grad = False
-            # ssl_lengths = ssl_lengths.cuda(rank, non_blocking=True)
             text, text_lengths = (
                 text.cuda(
                     rank,
@@ -374,7 +351,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             y, y_lengths = y.to(device), y_lengths.to(device)
             ssl = ssl.to(device)
             ssl.requires_grad = False
-            # ssl_lengths = ssl_lengths.cuda(rank, non_blocking=True)
             text, text_lengths = text.to(device), text_lengths.to(device)
             if hps.model.version in {"v2Pro", "v2ProPlus"}:
                 sv_emb = sv_emb.to(device)
@@ -414,9 +390,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 hps.data.mel_fmax,
             )
 
-            y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)  # slice
+            y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)
 
-            # Discriminator
             y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat.detach())
             with autocast(enabled=False):
                 loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(
@@ -431,7 +406,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         scaler.step(optim_d)
 
         with autocast(enabled=hps.train.fp16_run):
-            # Generator
             y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
             with autocast(enabled=False):
                 loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
@@ -476,11 +450,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                     }
                 )
 
-                # scalar_dict.update({"loss/g/{}".format(i): v for i, v in enumerate(losses_gen)})
-                # scalar_dict.update({"loss/d_r/{}".format(i): v for i, v in enumerate(losses_disc_r)})
-                # scalar_dict.update({"loss/d_g/{}".format(i): v for i, v in enumerate(losses_disc_g)})
                 image_dict = None
-                try:  ###Some people installed the wrong version of matplotlib.
+                try:
                     image_dict = {
                         "slice/mel_org": utils.plot_spectrogram_to_numpy(
                             y_mel[0].data.cpu().numpy(),
@@ -664,11 +635,6 @@ def evaluate(hps, generator, eval_loader, writer_eval):
                     },
                 )
                 audio_dict.update({f"gt/audio_{batch_idx}": y[0, :, : y_lengths[0]]})
-
-        # y_hat, mask, *_ = generator.module.infer(ssl, spec_lengths, speakers, y=None)
-        # audio_dict.update({
-        #     f"gen/audio_{batch_idx}_style_pred": y_hat[0, :, :]
-        # })
 
     utils.summarize(
         writer=writer_eval,

@@ -1,5 +1,9 @@
-# modified from https://github.com/yangdongchao/SoundStorm/blob/master/soundstorm/s1/AR/models/t2s_model.py
-# reference: https://github.com/lifeiteng/vall-e
+"""GPT-SoVITS TorchScript export utilities.
+
+Modified from https://github.com/yangdongchao/SoundStorm t2s_model.py;
+reference https://github.com/lifeiteng/vall-e.
+"""
+
 import argparse
 from io import BytesIO
 from typing import Optional
@@ -74,10 +78,6 @@ def logits_to_probs(
     top_p: Optional[int] = None,
     repetition_penalty: float = 1.0,
 ):
-    # if previous_tokens is not None:
-    #     previous_tokens = previous_tokens.squeeze()
-    # print(logits.shape,previous_tokens.shape)
-    # pdb.set_trace()
     if previous_tokens is not None and repetition_penalty != 1.0:
         previous_tokens = previous_tokens.long()
         score = torch.gather(logits, dim=1, index=previous_tokens)
@@ -88,7 +88,7 @@ def logits_to_probs(
         sorted_logits, sorted_indices = torch.sort(logits, descending=True)
         cum_probs = torch.cumsum(torch.nn.functional.softmax(sorted_logits, dim=-1), dim=-1)
         sorted_indices_to_remove = cum_probs > top_p
-        sorted_indices_to_remove[:, 0] = False  # keep at least one option
+        sorted_indices_to_remove[:, 0] = False
         indices_to_remove = sorted_indices_to_remove.scatter(dim=1, index=sorted_indices, src=sorted_indices_to_remove)
         logits = logits.masked_fill(indices_to_remove, -float("Inf"))
 
@@ -105,7 +105,6 @@ def logits_to_probs(
 
 @torch.jit.script
 def multinomial_sample_one_no_sync(probs_sort):
-    # Does multinomial sampling without a cuda synchronization
     q = torch.empty_like(probs_sort).exponential_(1.0)
     return torch.argmax(probs_sort / q, dim=-1, keepdim=True).to(dtype=torch.int)
 
@@ -135,7 +134,6 @@ def sample(
 def spectrogram_torch(
     hann_window: Tensor, y: Tensor, n_fft: int, sampling_rate: int, hop_size: int, win_size: int, center: bool = False
 ):
-    # hann_window = torch.hann_window(win_size, device=y.device, dtype=y.dtype)
     y = torch.nn.functional.pad(
         y.unsqueeze(1),
         (int((n_fft - hop_size) / 2), int((n_fft - hop_size) / 2)),
@@ -267,7 +265,6 @@ class T2SBlock:
 
         if padding_mask is not None:
             for i in range(batch_size):
-                # mask = padding_mask[i,:,0]
                 if self.false.device != padding_mask.device:
                     self.false = self.false.to(padding_mask.device)
                 idx = torch.where(padding_mask[i, :, 0] == self.false)[0]
@@ -314,8 +311,6 @@ class T2SBlock:
 
         attn = F.scaled_dot_product_attention(q, k, v)
 
-        # attn = attn.permute(2, 0, 1, 3).reshape(batch_size * q_len, self.hidden_dim)
-        # attn = attn.view(q_len, batch_size, self.hidden_dim).transpose(1, 0)
         attn = attn.transpose(1, 2).reshape(batch_size, q_len, -1)
         attn = F.linear(attn, self.out_w, self.out_b)
 
@@ -356,7 +351,6 @@ class T2STransformer:
 class VitsModel(nn.Module):
     def __init__(self, vits_path, version=None, is_half=True, device="cpu"):
         super().__init__()
-        # dict_s2 = torch.load(vits_path,map_location="cpu")
         dict_s2 = load_sovits_new(vits_path)
         self.hps = dict_s2["config"]
 
@@ -411,7 +405,6 @@ class T2SModel(nn.Module):
         self.num_layers = raw_t2s.model.num_layers
         self.vocab_size = raw_t2s.model.vocab_size
         self.phoneme_vocab_size = raw_t2s.model.phoneme_vocab_size
-        # self.p_dropout = float(raw_t2s.model.p_dropout)
         self.EOS: int = int(raw_t2s.model.EOS)
         self.norm_first = raw_t2s.model.norm_first
         assert self.EOS == self.vocab_size - 1
@@ -422,9 +415,6 @@ class T2SModel(nn.Module):
         self.ar_text_position = raw_t2s.model.ar_text_position
         self.ar_audio_embedding = raw_t2s.model.ar_audio_embedding
         self.ar_audio_position = raw_t2s.model.ar_audio_position
-
-        # self.t2s_transformer = T2STransformer(self.num_layers, blocks)
-        # self.t2s_transformer = raw_t2s.model.t2s_transformer
 
         blocks = []
         h = raw_t2s.model.h
@@ -453,9 +443,7 @@ class T2SModel(nn.Module):
 
         self.t2s_transformer = T2STransformer(self.num_layers, blocks)
 
-        # self.ar_predict_layer = nn.Linear(self.model_dim, self.vocab_size, bias=False)
         self.ar_predict_layer = raw_t2s.model.ar_predict_layer
-        # self.loss_fct = nn.CrossEntropyLoss(reduction="sum")
         self.max_sec = raw_t2s.config["data"]["max_sec"]
         self.top_k = int(raw_t2s.config["inference"]["top_k"])
         self.early_stop_num = torch.LongTensor([self.hz * self.max_sec])
@@ -475,18 +463,14 @@ class T2SModel(nn.Module):
 
         x = self.ar_text_embedding(all_phoneme_ids)
 
-        # avoid dtype inconsistency when exporting
         bert = bert.to(dtype=self.bert_proj.weight.dtype)
-        
+
         x = x + self.bert_proj(bert.transpose(1, 2))
         x: torch.Tensor = self.ar_text_position(x)
 
         early_stop_num = self.early_stop_num
 
-        # [1,N,512] [1,N]
-        # y, k, v, y_emb, x_example = self.first_stage_decoder(x, prompts)
         y = prompts
-        # x_example = x[:,:,0] * 0.0
 
         x_len = x.shape[1]
         x_attn_mask = torch.zeros((x_len, x_len), dtype=torch.bool)
@@ -501,10 +485,10 @@ class T2SModel(nn.Module):
         src_len = x_len + y_len
         x_attn_mask_pad = F.pad(
             x_attn_mask,
-            (0, y_len),  ###xx的纯0扩展到xx纯0+xy纯1，(x,x+y)
+            (0, y_len),
             value=True,
         )
-        y_attn_mask = F.pad(  ###yy的右上1扩展到左边xy的0,(y,x+y)
+        y_attn_mask = F.pad(
             torch.triu(torch.ones(y_len, y_len, dtype=torch.bool), diagonal=1),
             (x_len, 0),
             value=False,
@@ -532,14 +516,11 @@ class T2SModel(nn.Module):
         ].to(dtype=y_emb.dtype, device=y_emb.device)
 
         stop = False
-        # for idx in range(1, 50):
         for idx in range(1, 1500):
-            # [1, N] [N_layer, N, 1, 512] [N_layer, N, 1, 512] [1, N, 512] [1] [1, N, 512] [1, N]
-            # y, k, v, y_emb, logits, samples = self.stage_decoder(y, k, v, y_emb, x_example)
             xy_dec, k_cache, v_cache = self.t2s_transformer.decode_next_token(xy_pos, k_cache, v_cache)
             logits = self.ar_predict_layer(xy_dec[:, -1])
 
-            if idx < 11:  ###至少预测出10个token不然不给停止（0.4s）
+            if idx < 11:
                 logits = logits[:, :-1]
 
             samples = sample(logits, y, top_k=top_k, top_p=1, repetition_penalty=1.35, temperature=1.0)[0]
@@ -577,7 +558,6 @@ def build_phone_level_feature(res: Tensor, word2ph: IntTensor):
         repeat_feature = res[i].repeat(word2ph[i].item(), 1)
         phone_level_feature.append(repeat_feature)
     phone_level_feature = torch.cat(phone_level_feature, dim=0)
-    # [sum(word2ph), 1024]
     return phone_level_feature
 
 
@@ -590,7 +570,6 @@ class MyBertModel(torch.nn.Module):
         self, input_ids: torch.Tensor, attention_mask: torch.Tensor, token_type_ids: torch.Tensor, word2ph: IntTensor
     ):
         outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids)
-        # res = torch.cat(outputs["hidden_states"][-3:-2], -1)[0][1:-1]
         res = torch.cat(outputs[1][-3:-2], -1)[0][1:-1]
         return build_phone_level_feature(res, word2ph)
 
@@ -686,12 +665,9 @@ def export(gpt_path, vits_path, ref_audio_path, ref_text, output_path, export_be
 
     ssl_content = ssl(ref_audio).to(device)
 
-    # vits_path = "SoVITS_weights_v2/xw_e8_s216.pth"
     vits = VitsModel(vits_path, device=device, is_half=False)
     vits.eval()
 
-    # gpt_path = "GPT_weights_v2/xw-e15.ckpt"
-    # dict_s1 = torch.load(gpt_path, map_location=device)
     dict_s1 = torch.load(gpt_path, weights_only=False)
     raw_t2s = get_raw_t2s_model(dict_s1).to(device)
     print("#### get_raw_t2s_model ####")
@@ -784,12 +760,9 @@ def export_prov2(
 
     sv_model = ExportERes2NetV2(sv_cn_model)
 
-    # vits_path = "SoVITS_weights_v2/xw_e8_s216.pth"
     vits = VitsModel(vits_path, version, is_half=is_half, device=device)
     vits.eval()
 
-    # gpt_path = "GPT_weights_v2/xw-e15.ckpt"
-    # dict_s1 = torch.load(gpt_path, map_location=device)
     dict_s1 = torch.load(gpt_path, weights_only=False)
     raw_t2s = get_raw_t2s_model(dict_s1).to(device)
     print("#### get_raw_t2s_model ####")
@@ -816,10 +789,8 @@ def export_prov2(
     torch._dynamo.mark_dynamic(text_seq, 1)
     torch._dynamo.mark_dynamic(ref_bert, 0)
     torch._dynamo.mark_dynamic(text_bert, 0)
-    # torch._dynamo.mark_dynamic(sv_emb, 0)
 
     top_k = torch.LongTensor([5]).to(device)
-    # 先跑一遍 sv_model 让它加载 cache，详情见 L880
     gpt_sovits.sv_model(ref_audio_sr)
 
     with torch.no_grad():
@@ -846,8 +817,8 @@ def export_prov2(
 
 @torch.jit.script
 def parse_audio(ref_audio):
-    ref_audio_16k = torchaudio.functional.resample(ref_audio, 48000, 16000).float()  # .to(ref_audio.device)
-    ref_audio_sr = torchaudio.functional.resample(ref_audio, 48000, 32000).float()  # .to(ref_audio.device)
+    ref_audio_16k = torchaudio.functional.resample(ref_audio, 48000, 16000).float()
+    ref_audio_sr = torchaudio.functional.resample(ref_audio, 48000, 32000).float()
     return ref_audio_16k, ref_audio_sr
 
 
@@ -894,14 +865,11 @@ class ExportERes2NetV2(nn.Module):
         self.layer3_ds = sv_cn_model.embedding_model.layer3_ds
         self.fuse34 = sv_cn_model.embedding_model.fuse34
 
-    # audio_16k.shape: [1,N]
     def forward(self, audio_16k):
-        # 这个 fbank 函数有一个 cache, 不过不要紧，它跟 audio_16k 的长度无关
-        # 只跟 device 和 dtype 有关
         x = Kaldi.fbank(audio_16k, num_mel_bins=80, sample_frequency=16000, dither=0)
         x = torch.stack([x])
 
-        x = x.permute(0, 2, 1)  # (B,T,F) => (B,F,T)
+        x = x.permute(0, 2, 1)
         x = x.unsqueeze_(1)
         out = F.relu(self.bn1(self.conv1(x)))
         out1 = self.layer1(out)
@@ -958,31 +926,15 @@ def test():
     ref_text = args.ref_text
 
     tokenizer = AutoTokenizer.from_pretrained(bert_path)
-    # bert_model = AutoModelForMaskedLM.from_pretrained(bert_path,output_hidden_states=True,torchscript=True)
-    # bert = MyBertModel(bert_model)
     my_bert = torch.jit.load("onnx/bert_model.pt", map_location="cuda")
 
-    # dict_s1 = torch.load(gpt_path, map_location="cuda")
-    # raw_t2s = get_raw_t2s_model(dict_s1)
-    # t2s = T2SModel(raw_t2s)
-    # t2s.eval()
-    # t2s = torch.jit.load("onnx/xw/t2s_model.pt",map_location='cuda')
-
-    # vits_path = "SoVITS_weights_v2/xw_e8_s216.pth"
-    # vits = VitsModel(vits_path)
-    # vits.eval()
-
-    # ssl = ExportSSLModel(SSLModel()).to('cuda')
-    # ssl.eval()
     ssl = torch.jit.load("onnx/by/ssl_model.pt", map_location="cuda")
 
-    # gpt_sovits = GPT_SoVITS(t2s,vits)
     gpt_sovits = torch.jit.load("onnx/by/gpt_sovits_model.pt", map_location="cuda")
 
     ref_seq_id, ref_bert_T, ref_norm_text = get_phones_and_bert(ref_text, "all_zh", "v2")
     ref_seq = torch.LongTensor([ref_seq_id])
     ref_bert = ref_bert_T.T.to(ref_seq.device)
-    # text_seq_id,text_bert_T,norm_text = get_phones_and_bert("昨天晚上看见征兵文书,知道君主在大规模征兵,那么多卷征兵文册,每一卷上都有父亲的名字.","all_zh",'v2')
     text = "昨天晚上看见征兵文书,知道君主在大规模征兵,那么多卷征兵文册,每一卷上都有父亲的名字."
 
     text_seq_id, text_bert_T, norm_text = get_phones_and_bert(text, "all_zh", "v2")
@@ -1013,7 +965,6 @@ def test():
     print("text_seq:", text_seq.shape)
     print("text_bert:", text_bert.shape, text_bert.type())
 
-    # [1,N]
     ref_audio = torch.tensor([load_audio(ref_audio_path, 16000)]).float().to("cuda")
     print("ref_audio:", ref_audio.shape)
 
@@ -1098,4 +1049,3 @@ def main():
 if __name__ == "__main__":
     with torch.no_grad():
         main()
-    # test()

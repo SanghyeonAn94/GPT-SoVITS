@@ -1,5 +1,9 @@
-# modified from https://github.com/yangdongchao/SoundStorm/blob/master/soundstorm/s1/AR/models/t2s_model.py
-# reference: https://github.com/lifeiteng/vall-e
+"""Autoregressive text-to-semantic decoder model (ONNX export variant).
+
+modified from https://github.com/yangdongchao/SoundStorm/blob/master/soundstorm/s1/AR/models/t2s_model.py
+reference: https://github.com/lifeiteng/vall-e
+"""
+
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -52,7 +56,7 @@ def logits_to_probs(
             dim=-1,
         )
         sorted_indices_to_remove = cum_probs > top_p
-        sorted_indices_to_remove[0] = False  # keep at least one option
+        sorted_indices_to_remove[0] = False
         indices_to_remove = sorted_indices_to_remove.scatter(
             dim=0,
             index=sorted_indices,
@@ -73,7 +77,7 @@ def logits_to_probs(
 
 def multinomial_sample_one_no_sync(
     probs_sort,
-):  # Does multinomial sampling without a cuda synchronization
+):
     q = torch.randn_like(probs_sort)
     return torch.argmax(probs_sort / q, dim=-1, keepdim=True).to(dtype=torch.int)
 
@@ -132,7 +136,6 @@ class T2SFirstStageDecoder(nn.Module):
     def forward(self, x, prompt):
         y = prompt
         x_example = x[:, :, 0] * 0.0
-        # N, 1, 512
         cache = {
             "all_stage": self.num_layers,
             "k": None,
