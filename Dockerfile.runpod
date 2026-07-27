@@ -20,12 +20,19 @@ RUN aws s3 sync "${GPTSOVITS_PRETRAINED_S3}/GPT-SoVITS/GPT_SoVITS/pretrained_mod
     echo "baked at build time" > /assets/uvr5_weights/.s3_synced
 
 # ── Stage 2: runtime image ───────────────────────────────────────────────
-FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
+# The fleet's combined image (voice-multi) runs all eight voice models inside a
+# single container, so every repo has to agree on base image, interpreter and
+# venv path. A repo that brings its own Ubuntu release or its own CPython makes
+# that image ship two interpreters and two ~3GB copies of torch, for nothing.
+# ubuntu24.04 (noble) already ships python3.12, which is why the deadsnakes PPA
+# and the get-pip bootstrap below are gone.
+FROM docker.io/nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    GPTSOVITS_BASE_DIR=/app/GPT-SoVITS \
+    PATH=/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    GPTSOVITS_BASE_DIR=/srv/gpt-sovits \
     GPTSOVITS_VOLUME_PATH=/runpod-volume/gpt-sovits \
     GPTSOVITS_WORK_ROOT=/tmp/work \
     GPTSOVITS_ASR_PATH=/runpod-volume/gpt-sovits/asr/faster-whisper-large-v3 \
@@ -33,17 +40,25 @@ ENV DEBIAN_FRONTEND=noninteractive \
     GPTSOVITS_MODEL_REGISTRY_S3=s3://shiftup-enterprise-ai-service/voice/model_registry/GPT-SoVITS \
     AWS_DEFAULT_REGION=ap-northeast-2
 
+# python3.12-dev + build-essential stay because this requirement set really does
+# compile: pyopenjtalk and jieba_fast ship as sdists, and the `--no-binary=opencc`
+# line at the top of requirements.txt forces opencc to build from source too.
+# python3.12-distutils is gone because 3.12 dropped distutils from the stdlib
+# (setuptools provides it now); everything else apt installed before is kept.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        software-properties-common ca-certificates && \
-    add-apt-repository ppa:deadsnakes/ppa && \
-    apt-get update && apt-get install -y --no-install-recommends \
-        python3.11 python3.11-dev python3.11-distutils \
+        ca-certificates \
+        python3.12 python3.12-dev python3.12-venv \
         git wget curl ffmpeg libsndfile1 build-essential && \
     rm -rf /var/lib/apt/lists/*
 
-RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11 && \
-    update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 && \
-    update-alternatives --install /usr/bin/pip pip /usr/local/bin/pip3.11 1
+# Everything below installs into /opt/venv (first on PATH), the shared location
+# the combined image expects. Note that a venv does not fall back to apt's
+# /usr/lib/python3/dist-packages, so every import has to come from pip here.
+RUN python3.12 -m venv /opt/venv
+
+# python3.12 no longer seeds setuptools into a fresh venv, so bootstrap the
+# build trio before anything that needs a sdist build (see the compilers above).
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # torch 2.8.0 is the single version every voice image installs, so the fleet
 # shares one torch/CUDA ABI (and 2.8 is the first stable series with sm_100).
@@ -51,7 +66,14 @@ RUN pip install --no-cache-dir \
         torch==2.8.0 torchaudio==2.8.0 \
         --index-url https://download.pytorch.org/whl/cu128
 
-WORKDIR /app/GPT-SoVITS
+# Code lives at /srv/<repo-key>, not /app: every repo in the fleet names its
+# handler package `app`, so eight repos cannot all root their code at /app in
+# the combined image. Building at the same absolute path the container runs from
+# also keeps path-sensitive installs honest and removes PYTHONPATH patch-ups.
+WORKDIR /srv/gpt-sovits
+# Compat symlink: the old code root stays valid for anything (scripts, docs,
+# saved configs, external callers) that still says /app/GPT-SoVITS.
+RUN mkdir -p /app && ln -s /srv/gpt-sovits /app/GPT-SoVITS
 
 # torch/torchaudio repeated here so resolving these requirements cannot quietly
 # upgrade them through a transitive dependency (that is how CosyVoice's image
@@ -71,7 +93,7 @@ RUN pip install --no-cache-dir \
 
 RUN python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng'); nltk.download('punkt')"
 
-COPY . /app/GPT-SoVITS
+COPY . /srv/gpt-sovits
 
 COPY --from=asset-fetcher /assets/pretrained_models GPT_SoVITS/pretrained_models
 COPY --from=asset-fetcher /assets/asr/faster-whisper-large-v3 tools/asr/models/faster-whisper-large-v3
@@ -79,9 +101,9 @@ COPY --from=asset-fetcher /assets/uvr5_weights tools/uvr5/uvr5_weights
 
 RUN echo '#!/bin/bash\n\
 set -e\n\
-cd /app/GPT-SoVITS\n\
+cd "${GPTSOVITS_BASE_DIR:-/srv/gpt-sovits}"\n\
 \n\
-VOL=/runpod-volume/gpt-sovits\n\
+VOL="${GPTSOVITS_VOLUME_PATH:-/runpod-volume/gpt-sovits}"\n\
 S3_BASE=${GPTSOVITS_PRETRAINED_S3:-s3://shiftup-enterprise-ai-service/voice/model_registry}\n\
 \n\
 if [ -d "$VOL/pretrained_models" ]; then\n\

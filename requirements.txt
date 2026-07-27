@@ -17,6 +17,9 @@ pyopenjtalk==0.4.1
 g2p_en==2.1.0
 torchaudio
 modelscope==1.10.0
+# Declared explicitly: funasr and modelscope (via oss2) import six without
+# depending on it, and a venv has no apt dist-packages tree to supply it.
+six>=1.16.0
 sentencepiece==0.2.1
 transformers==4.46.3
 peft==0.12.0

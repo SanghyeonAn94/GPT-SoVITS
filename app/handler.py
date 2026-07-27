@@ -30,6 +30,7 @@ import base64
 import io
 import logging
 import os
+import pathlib
 import shutil
 import subprocess
 import sys
@@ -44,7 +45,12 @@ import soundfile as sf
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-GPTSOVITS_BASE_DIR = os.environ.get("GPTSOVITS_BASE_DIR", "/app/GPT-SoVITS")
+# Default follows the code instead of naming a fixed image path, so it stays
+# correct wherever the checkout is installed (/srv/gpt-sovits, /app/GPT-SoVITS,
+# a dev clone). app/handler.py -> parents[1] is the GPT-SoVITS repo root.
+_REPO_ROOT = str(pathlib.Path(__file__).resolve().parents[1])
+
+GPTSOVITS_BASE_DIR = os.environ.get("GPTSOVITS_BASE_DIR", _REPO_ROOT)
 GPTSOVITS_VOLUME_PATH = os.environ.get(
     "GPTSOVITS_VOLUME_PATH", "/runpod-volume/gpt-sovits"
 )

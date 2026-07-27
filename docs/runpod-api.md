@@ -315,7 +315,7 @@ when the internal `job_id` does not correlate to a tracked parallel job.
 
 | Key | Default | Purpose |
 |---|---|---|
-| `GPTSOVITS_BASE_DIR` | `/app/GPT-SoVITS` | Source repo root |
+| `GPTSOVITS_BASE_DIR` | `/srv/gpt-sovits` | Source repo root |
 | `GPTSOVITS_VOLUME_PATH` | `/runpod-volume/gpt-sovits` | Network Volume mount |
 | `GPTSOVITS_WORK_ROOT` | `/tmp/work` | Ephemeral working root |
 | `GPTSOVITS_ASR_PATH` | `$GPTSOVITS_VOLUME_PATH/asr/faster-whisper-large-v3` | Whisper weights |
