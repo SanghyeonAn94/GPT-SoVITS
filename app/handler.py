@@ -275,7 +275,11 @@ def _action_stt(payload: Dict[str, Any]) -> Dict[str, Any]:
                     detected_language = parts[2].lower()
                     transcriptions.append(parts[3].strip())
                     entries.append(
-                        {"file": parts[1], "language": parts[2], "text": parts[3].strip()}
+                        {
+                            "file": os.path.basename(parts[0]),
+                            "language": parts[2],
+                            "text": parts[3].strip(),
+                        }
                     )
 
         return {
