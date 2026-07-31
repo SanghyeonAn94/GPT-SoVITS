@@ -154,6 +154,16 @@ def execute_asr(input_folder, output_folder, model_path, language, precision):
                 if text == "":
                     for segment in segments:
                         text += segment.text
+
+                if text.strip() == "":
+                    segments, info = model.transcribe(
+                        audio=file_path,
+                        beam_size=5,
+                        vad_filter=False,
+                        language=language,
+                    )
+                    text = "".join(segment.text for segment in segments)
+
                 output.append(f"{file_path}|{output_file_name}|{info.language.upper()}|{text}")
                 stt_used_count += 1
             except Exception as e:
