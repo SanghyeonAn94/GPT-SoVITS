@@ -115,11 +115,12 @@ def execute_asr(input_folder, output_folder, model_path, language, precision):
     with manager.get_model(model_path, device, precision) as model:
         print(f"STT model acquired (device={device}, precision={precision})")
 
-        input_file_names = [
-            f for f in os.listdir(input_folder)
+        input_file_names = sorted(
+            os.path.relpath(os.path.join(root, f), input_folder)
+            for root, _dirs, files in os.walk(input_folder)
+            for f in files
             if os.path.splitext(f.lower())[1] in AUDIO_EXTENSIONS
-        ]
-        input_file_names.sort()
+        )
 
         output = []
         output_file_name = os.path.basename(input_folder)

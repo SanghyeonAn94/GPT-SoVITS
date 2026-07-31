@@ -276,7 +276,7 @@ def _action_stt(payload: Dict[str, Any]) -> Dict[str, Any]:
                     transcriptions.append(parts[3].strip())
                     entries.append(
                         {
-                            "file": os.path.basename(parts[0]),
+                            "file": os.path.relpath(parts[0], local_in),
                             "language": parts[2],
                             "text": parts[3].strip(),
                         }
