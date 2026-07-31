@@ -37,12 +37,35 @@ def parse_uri(uri: str) -> Tuple[str, str]:
     return bucket, key
 
 
+
+_XFER = None
+
+
+def _s3_transfer():
+    """Client for moving bytes, on the accelerated endpoint when it is turned on.
+
+    Transfer Acceleration routes through CloudFront edges, so it helps wherever the pod
+    is rather than tying us to one replica region — and RunPod moves pods between
+    regions. Listing stays on the regular client: acceleration covers object transfers,
+    not every bucket operation.
+    """
+    global _XFER
+    if _XFER is None:
+        if os.getenv("S3_ACCELERATE", "").lower() not in ("1", "true", "yes", "on"):
+            return _s3()
+        import boto3
+        from botocore.config import Config
+
+        _XFER = boto3.client("s3", config=Config(s3={"use_accelerate_endpoint": True}))
+    return _XFER
+
+
 def download_file(uri: str, local_path: str) -> str:
     bucket, key = parse_uri(uri)
     parent = os.path.dirname(local_path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    _s3().download_file(bucket, key, local_path)
+    _s3_transfer().download_file(bucket, key, local_path)
     return local_path
 
 
@@ -53,7 +76,7 @@ def download_to_temp(uri: str, suffix: Optional[str] = None) -> str:
         suffix = "." + name.rsplit(".", 1)[-1] if "." in name else ""
     fd, path = tempfile.mkstemp(suffix=suffix)
     os.close(fd)
-    _s3().download_file(bucket, key, path)
+    _s3_transfer().download_file(bucket, key, path)
     return path
 
 
@@ -75,7 +98,7 @@ def download_prefix(prefix_uri: str, local_dir: str) -> int:
                 continue
             dst = os.path.join(local_dir, rel)
             os.makedirs(os.path.dirname(dst) or local_dir, exist_ok=True)
-            _s3().download_file(bucket, key, dst)
+            _s3_transfer().download_file(bucket, key, dst)
             count += 1
     logger.info(f"[s3] downloaded {count} files from {prefix_uri} -> {local_dir}")
     return count
@@ -100,7 +123,7 @@ def ensure_local(local_dir: str, s3_fallback_uri: str, marker: str = ".s3_synced
 def upload_file(local_path: str, uri: str, content_type: Optional[str] = None) -> str:
     bucket, key = parse_uri(uri)
     extra = {"ContentType": content_type} if content_type else None
-    _s3().upload_file(local_path, bucket, key, ExtraArgs=extra)
+    _s3_transfer().upload_file(local_path, bucket, key, ExtraArgs=extra)
     return uri
 
 
@@ -113,7 +136,7 @@ def upload_dir(local_dir: str, prefix_uri: str) -> int:
             local_path = os.path.join(root, name)
             rel = os.path.relpath(local_path, local_dir).replace(os.sep, "/")
             key = f"{prefix}/{rel}" if prefix else rel
-            _s3().upload_file(local_path, bucket, key)
+            _s3_transfer().upload_file(local_path, bucket, key)
             count += 1
     logger.info(f"[s3] uploaded {count} files from {local_dir} -> {prefix_uri}")
     return count
