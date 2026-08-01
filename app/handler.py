@@ -183,7 +183,17 @@ def _action_speech_slicing(payload: Dict[str, Any]) -> Dict[str, Any]:
     local_out = os.path.join(WORK_ROOT, f"slice_out_{job}")
 
     try:
-        input_count = s3_utils.download_prefix(input_s3, local_in)
+        names = payload.get("names")
+        if names:
+            os.makedirs(local_in, exist_ok=True)
+            input_count = 0
+            for name in names:
+                dst = os.path.join(local_in, name)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                s3_utils.download_file(input_s3.rstrip("/") + "/" + name, dst)
+                input_count += 1
+        else:
+            input_count = s3_utils.download_prefix(input_s3, local_in)
         os.makedirs(local_out, exist_ok=True)
 
         n_parts = int(payload.get("n_parts", 4))
@@ -239,7 +249,17 @@ def _action_stt(payload: Dict[str, Any]) -> Dict[str, Any]:
     local_out = os.path.join(WORK_ROOT, f"stt_out_{job}")
 
     try:
-        input_count = s3_utils.download_prefix(input_s3, local_in)
+        names = payload.get("names")
+        if names:
+            os.makedirs(local_in, exist_ok=True)
+            input_count = 0
+            for name in names:
+                dst = os.path.join(local_in, name)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                s3_utils.download_file(input_s3.rstrip("/") + "/" + name, dst)
+                input_count += 1
+        else:
+            input_count = s3_utils.download_prefix(input_s3, local_in)
         os.makedirs(local_out, exist_ok=True)
 
         from tools.asr.fasterwhisper_asr import execute_asr
