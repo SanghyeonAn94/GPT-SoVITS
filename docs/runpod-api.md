@@ -119,40 +119,7 @@ Response (single sample):
 }
 ```
 
-### 3.2 `action: "speech_slicing"`
-
-```json
-{
-  "input": {
-    "action": "speech_slicing",
-    "input_s3_prefix": "s3://bucket/voice/preprocessing/slicing/<req_id>/",
-    "output_s3_prefix": "s3://bucket/voice/preprocessing/sliced/<req_id>/",
-    "threshold": "-34",
-    "min_length": "4000",
-    "min_interval": "300",
-    "hop_size": "10",
-    "max_sil_kept": "500",
-    "_max": 0.9,
-    "alpha": 0.25,
-    "n_parts": 4
-  }
-}
-```
-
-Response:
-
-```json
-{
-  "output": {
-    "input_file_count": 12,
-    "output_s3_prefix": "s3://...",
-    "sliced_file_count": 87,
-    "sliced_file_names": ["...001.wav", "...002.wav", "..."]
-  }
-}
-```
-
-### 3.3 `action: "stt"`
+### 3.2 `action: "stt"`
 
 ```json
 {
@@ -179,45 +146,6 @@ Response:
     ]
   }
 }
-```
-
-### 3.4 `action: "uvr5_separate"`
-
-```json
-{
-  "input": {
-    "action": "uvr5_separate",
-    "input_audio": "s3://bucket/voice/uvr5/<req_id>/input.wav",
-    "output_s3_prefix": "s3://bucket/voice/uvr5/<req_id>/",
-    "model_name": "HP5_only_main_vocal",
-    "output_format": "wav",
-    "agg": 10
-  }
-}
-```
-
-Response:
-
-```json
-{
-  "output": {
-    "model_used": "HP5_only_main_vocal",
-    "vocal_audio_uri": "s3://.../vocal.wav",
-    "instrumental_audio_uri": "s3://.../instrumental.wav"
-  }
-}
-```
-
-### 3.5 `action: "uvr5_models"`
-
-```json
-{"input": {"action": "uvr5_models"}}
-```
-
-Response:
-
-```json
-{"output": {"models": ["HP2_all_vocals", "HP5_only_main_vocal", "VR-DeEchoNormal", ...]}}
 ```
 
 ## 4. Training (`/run`, always async)
@@ -319,7 +247,6 @@ when the internal `job_id` does not correlate to a tracked parallel job.
 | `GPTSOVITS_VOLUME_PATH` | `/runpod-volume/gpt-sovits` | Network Volume mount |
 | `GPTSOVITS_WORK_ROOT` | `/tmp/work` | Ephemeral working root |
 | `GPTSOVITS_ASR_PATH` | `$GPTSOVITS_VOLUME_PATH/asr/faster-whisper-large-v3` | Whisper weights |
-| `GPTSOVITS_UVR5_WEIGHTS` | `$GPTSOVITS_VOLUME_PATH/uvr5_weights` | UVR5 weights |
 | `GPTSOVITS_MODEL_REGISTRY_S3` | `s3://shiftup-enterprise-ai-service/voice/model_registry/GPT-SoVITS` | Where train uploads checkpoints |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_DEFAULT_REGION` | — | S3 access |
 | `RUNPOD_API_KEY` | — | Not read by handler; needed by clients |

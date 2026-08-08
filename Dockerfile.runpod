@@ -12,9 +12,7 @@ ENV AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} \
 RUN aws s3 sync "${GPTSOVITS_PRETRAINED_S3}/GPT-SoVITS/GPT_SoVITS/pretrained_models/" /assets/pretrained_models/ && \
     echo "baked at build time" > /assets/pretrained_models/.s3_synced && \
     aws s3 sync "${GPTSOVITS_PRETRAINED_S3}/base/faster-whisper-large-v3/" /assets/asr/faster-whisper-large-v3/ && \
-    echo "baked at build time" > /assets/asr/faster-whisper-large-v3/.s3_synced && \
-    aws s3 sync "${GPTSOVITS_PRETRAINED_S3}/GPT-SoVITS/tools/uvr5/uvr5_weights/" /assets/uvr5_weights/ && \
-    echo "baked at build time" > /assets/uvr5_weights/.s3_synced
+    echo "baked at build time" > /assets/asr/faster-whisper-large-v3/.s3_synced
 
 FROM docker.io/nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
 
@@ -26,7 +24,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
     GPTSOVITS_VOLUME_PATH=/runpod-volume/gpt-sovits \
     GPTSOVITS_WORK_ROOT=/tmp/work \
     GPTSOVITS_ASR_PATH=/runpod-volume/gpt-sovits/asr/faster-whisper-large-v3 \
-    GPTSOVITS_UVR5_WEIGHTS=/runpod-volume/gpt-sovits/uvr5_weights \
     GPTSOVITS_MODEL_REGISTRY_S3=s3://shiftup-enterprise-ai-service/voice/model_registry/GPT-SoVITS \
     AWS_DEFAULT_REGION=ap-northeast-2
 
@@ -55,7 +52,6 @@ RUN pip install --no-cache-dir -r /tmp/gpt-sovits-requirements.txt \
 RUN pip install --no-cache-dir \
         "faster-whisper>=1.1.0" \
         soundfile \
-        BS-RoFormer \
         boto3 \
         httpx \
         runpod
@@ -66,7 +62,6 @@ COPY . /srv/gpt-sovits
 
 COPY --from=asset-fetcher /assets/pretrained_models GPT_SoVITS/pretrained_models
 COPY --from=asset-fetcher /assets/asr/faster-whisper-large-v3 tools/asr/models/faster-whisper-large-v3
-COPY --from=asset-fetcher /assets/uvr5_weights tools/uvr5/uvr5_weights
 
 RUN echo '#!/bin/bash\n\
 set -e\n\
@@ -89,14 +84,6 @@ if [ -d "$VOL/asr" ]; then\n\
 elif [ ! -f "tools/asr/models/faster-whisper-large-v3/.s3_synced" ]; then\n\
     echo "Syncing ASR model from S3..."\n\
     python -c "from app.s3_utils import ensure_local; ensure_local('"'"'tools/asr/models/faster-whisper-large-v3'"'"', '"'"'${S3_BASE}/base/faster-whisper-large-v3/'"'"')"\n\
-fi\n\
-\n\
-if [ -d "$VOL/uvr5_weights" ]; then\n\
-    rm -rf tools/uvr5/uvr5_weights\n\
-    ln -sfn "$VOL/uvr5_weights" tools/uvr5/uvr5_weights\n\
-elif [ ! -f "tools/uvr5/uvr5_weights/.s3_synced" ]; then\n\
-    echo "Syncing UVR5 weights from S3..."\n\
-    python -c "from app.s3_utils import ensure_local; ensure_local('"'"'tools/uvr5/uvr5_weights'"'"', '"'"'${S3_BASE}/GPT-SoVITS/tools/uvr5/uvr5_weights/'"'"')"\n\
 fi\n\
 \n\
 mkdir -p "$GPTSOVITS_WORK_ROOT"\n\
